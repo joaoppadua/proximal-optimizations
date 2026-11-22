@@ -90,4 +90,4 @@ class Policy(nn.Module):
 
     def clone(self) -> "Policy":
         """Independent deep copy with trainable parameters."""
-        return copy.deepcopy(self)
+        return copy.deepcopy(self).requires_grad_(True)
