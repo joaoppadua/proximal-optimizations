@@ -98,6 +98,15 @@ def test_frontier_plot_with_ceiling_and_targets():
     assert isinstance(frontier_plot(frontier, {"ppo": [fake_run(), fake_run(0.1)]}), Figure)
 
 
+def test_scatter_puts_true_on_x_and_estimate_on_y():
+    true, est = torch.tensor([1.0, 2.0, 3.0]), torch.tensor([10.0, 20.0, 30.0])
+    for mask in (None, torch.tensor([True, False, True])):
+        fig = scatter_true_vs_estimate(estimate=est, true=true, mask=mask)
+        pts = np.concatenate([c.get_offsets() for c in fig.axes[0].collections])
+        assert sorted(pts[:, 0].tolist()) == [1.0, 2.0, 3.0]
+        assert sorted(pts[:, 1].tolist()) == [10.0, 20.0, 30.0]
+
+
 def test_frontier_plot_targets_differ_by_marker():
     fig = frontier_plot([(0.1, 0.5), (0.5, 0.9)], {}, targets={"a": (0.2, 0.6), "b": (0.4, 0.8)})
     lines = {ln.get_label(): ln for ln in fig.axes[0].get_lines()}

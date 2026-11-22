@@ -371,11 +371,11 @@ def _(DEFAULT_WORLD, PPOConfig, g_view, grpo, mo, plots, ref, train_ppo):
             mo.hstack(
                 [
                     plots.scatter_true_vs_estimate(
-                        _cmp["exact"], _cmp["group"], xlabel=_true,
+                        true=_cmp["exact"], estimate=_cmp["group"], xlabel=_true,
                         ylabel="R − group mean of R",
                     ),
                     plots.scatter_true_vs_estimate(
-                        _cmp["exact"], _cmp["critic"], xlabel=_true,
+                        true=_cmp["exact"], estimate=_cmp["critic"], xlabel=_true,
                         ylabel="R − critic V(x)",
                     ),
                 ],

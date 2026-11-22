@@ -259,19 +259,19 @@ def scatter_true_vs_estimate(
     xlabel: str = "",
     ylabel: str = "",
 ) -> Figure:
-    """Estimate against truth with the identity line; two colours when `mask` is given."""
+    """Truth on x, estimate on y, with the identity line; two colours when `mask` is given."""
     e = estimate.detach().flatten().numpy()
     t = true.detach().flatten().numpy()
     with _style():
         fig, (ax,) = _figure(width=4.6, height=4.2)
         if mask is None:
-            ax.scatter(e, t, s=14, alpha=0.6, color=_CYCLE[1], edgecolors="none")
+            ax.scatter(t, e, s=14, alpha=0.6, color=_CYCLE[1], edgecolors="none")
         else:
             m = mask.detach().flatten().numpy().astype(bool)
             # the masked group (usually the few covered points) is drawn on top
-            ax.scatter(e[m], t[m], s=14, alpha=0.6, color=_CYCLE[1], edgecolors="none",
+            ax.scatter(t[m], e[m], s=14, alpha=0.6, color=_CYCLE[1], edgecolors="none",
                        label=mask_labels[0], zorder=3)
-            ax.scatter(e[~m], t[~m], s=14, alpha=0.6, color=_CYCLE[0], edgecolors="none",
+            ax.scatter(t[~m], e[~m], s=14, alpha=0.6, color=_CYCLE[0], edgecolors="none",
                        label=mask_labels[1])
             ax.legend(loc="upper left")
         both = np.concatenate([e, t])
