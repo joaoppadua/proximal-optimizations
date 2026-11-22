@@ -1,6 +1,7 @@
 """Every notebook runs end to end as a script; notebooks 00 to 03 never touch OLMo."""
 
 import ast
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -34,6 +35,34 @@ def test_notebook_runs_as_a_script(path):
     result = subprocess.run(
         [sys.executable, str(path)],
         cwd=ROOT,
+        timeout=300,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-4000:]
+
+
+SYNTHESIS = ROOT / "notebooks" / "04_synthesis.py"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("case", ["committed_data", "empty_olmo_dir", "missing_synthesis_file"])
+def test_synthesis_notebook_runs_with_and_without_its_data(case, tmp_path):
+    """Notebook 04 runs as a script on the committed data, with `PROXOPT_OLMO_DIR` pointing
+    at an empty directory (no OLMo files), and with `PROXOPT_SYNTHESIS_FILE` pointing at a
+    file that does not exist (no precomputed comparison)."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("PROXOPT_OLMO_DIR", "PROXOPT_SYNTHESIS_FILE")}
+    if case == "empty_olmo_dir":
+        env["PROXOPT_OLMO_DIR"] = str(tmp_path)
+    elif case == "missing_synthesis_file":
+        env["PROXOPT_SYNTHESIS_FILE"] = str(tmp_path / "missing.json")
+    assert SYNTHESIS.exists(), "notebooks/04_synthesis.py is missing"
+    result = subprocess.run(
+        [sys.executable, str(SYNTHESIS)],
+        cwd=ROOT,
+        env=env,
         timeout=300,
         capture_output=True,
         text=True,
