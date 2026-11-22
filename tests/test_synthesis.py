@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -22,18 +23,46 @@ def test_lr_grid():
     assert synthesis.LR_GRID == (1e-4, 3e-4, 1e-3, 3e-3)
 
 
+RULE = {"ppo": 1e-3, "grpo": 1e-4, "grpo_ppo_like": 3e-4, "dpo": 3e-3, "ppo_rm": 3e-4}
+
+
+def _grid(rule):
+    """Grid rows whose lowest mean final gap falls at `rule[name]` for each name."""
+    return [{"name": n, "lr": r, "seeds": [0, 1, 2], "final_gaps": [0.1] * 3,
+             "mean_final_gap": 0.01 if r == rule[n] else 0.1 + r}
+            for n in synthesis.NAMES for r in synthesis.LR_GRID]
+
+
+def test_choose_takes_lowest_mean_final_gap():
+    assert synthesis.choose(_grid(RULE)) == RULE
+
+
+def test_comparison_rates_run_grpo_at_grpo_ppo_like_rate():
+    rates = synthesis.comparison_rates(RULE)
+    assert rates["grpo"] == RULE["grpo_ppo_like"] == 3e-4
+    assert {n: r for n, r in rates.items() if n != "grpo"} == {
+        n: r for n, r in RULE.items() if n != "grpo"
+    }
+    assert RULE["grpo"] == 1e-4  # the argument is not modified
+
+
 def test_method_flags_grid_edges_and_shared_seeds():
-    lr = {"ppo": 1e-3, "grpo": 1e-4, "grpo_ppo_like": 3e-4, "dpo": 3e-3, "ppo_rm": 3e-4}
-    grid = [{"name": n, "lr": r, "seeds": [0, 1, 2], "final_gaps": [0.1] * 3,
-             "mean_final_gap": 0.1} for n in synthesis.NAMES for r in synthesis.LR_GRID]
+    grid = _grid(RULE)
+    lr = synthesis.comparison_rates(RULE)
     m = synthesis.method(grid, {"beta": 0.1, "tau": 0.25, "lr": lr, "seeds": [0, 1, 2]})
-    edge = m["grid_edge"]
+    edge = m["grid_edge"]  # describes what the rule alone picked
     assert edge["ppo"] == {"at_grid_edge": False, "edge": None}
     assert edge["grpo"] == {"at_grid_edge": True, "edge": "lowest"}
     assert edge["dpo"] == {"at_grid_edge": True, "edge": "highest"}
     assert edge["grpo_ppo_like"]["at_grid_edge"] is False
+    assert m["rule_lr"] == RULE and m["comparison_lr"] == lr
     assert m["comparison_seeds"] == [0, 1, 2] and m["tuning_seeds"] == [0, 1, 2]
     assert m["same_seeds_for_tuning_and_comparison"] is True
+    exc = m["grpo_rate_exception"]
+    assert exc["rule_lr"] == 1e-4 and exc["used_lr"] == 3e-4
+    assert "grpo_ppo_like" in exc["reason"]
+    assert [row["lr"] for row in exc["mean_final_gap_by_lr"]] == list(synthesis.LR_GRID)
+    assert exc["mean_final_gap_by_lr"][0]["mean_final_gap"] == 0.01
 
 
 def test_load_returns_none_when_missing(tmp_path):
@@ -99,7 +128,14 @@ def test_committed_file_is_complete():
         (n, s) for n in synthesis.PAIR_COUNTS for s in (0, 1, 2)
     ]
     assert set(data["method"]) >= {"selection", "budget", "feedback_units", "grid_edge",
-                                   "same_seeds_for_tuning_and_comparison"}
+                                   "same_seeds_for_tuning_and_comparison", "grpo_rate_exception"}
+    # grpo runs at grpo_ppo_like's rate, and its grid rows are all still there
+    assert data["lr"]["grpo"] == data["lr"]["grpo_ppo_like"]
+    lr_of = lambda r: float(re.search(r"\blr=([0-9.e-]+)", r.config).group(1))
+    assert {lr_of(r) for r in data["runs"]["grpo"]} == {lr_of(r) for r in data["runs"]["grpo_ppo_like"]}
+    assert {lr_of(r) for r in data["runs"]["grpo"]} == {data["lr"]["grpo_ppo_like"]}
+    assert sorted(r["lr"] for r in data["grid"] if r["name"] == "grpo") == list(synthesis.LR_GRID)
+    assert synthesis.choose(data["grid"]) == data["method"]["rule_lr"]
 
 
 def test_committed_file_has_no_machine_details():

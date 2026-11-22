@@ -115,11 +115,30 @@ def _final_gap(run: Run) -> float:
     return run.metrics["gap"][-1]
 
 
+def choose(grid: list[dict]) -> dict[str, float]:
+    """The lowest-final-gap rule: per name in `grid`, the rate with the lowest mean final gap."""
+    names = [n for n in NAMES if any(r["name"] == n for r in grid)]
+    return {
+        n: min((r for r in grid if r["name"] == n), key=lambda r: r["mean_final_gap"])["lr"]
+        for n in names
+    }
+
+
+def comparison_rates(rule: dict[str, float]) -> dict[str, float]:
+    """The rates the comparison runs at: the rule's choice for every name, except that
+    published GRPO runs at the rate chosen for `grpo_ppo_like`. Published GRPO does not aim
+    at π*_β, so the rule would pick whichever rate gets least far within the budget; at one
+    shared rate the two GRPOs differ only in their two switches."""
+    rates = dict(rule)
+    rates["grpo"] = rule["grpo_ppo_like"]
+    return rates
+
+
 def tune(
     beta: float = 0.1, tau: float = 0.25, seeds: Sequence[int] = SEEDS
 ) -> tuple[list[dict], dict[str, float]]:
     """For each name and each rate in `LR_GRID`, the final gap of each seed and their mean,
-    at the default budget; the best rate per name is the one with the lowest mean."""
+    at the default budget; and the rule's choice per name (`choose`)."""
     ref = load_reference(DEFAULT_WORLD)
     rows = []
     for name in NAMES:
@@ -127,11 +146,7 @@ def tune(
             gaps = [_final_gap(run_one(name, ref, DEFAULT_WORLD, beta, tau, s, lr)) for s in seeds]
             rows.append({"name": name, "lr": lr, "seeds": list(seeds), "final_gaps": gaps,
                          "mean_final_gap": sum(gaps) / len(gaps)})
-    best = {
-        name: min((r for r in rows if r["name"] == name), key=lambda r: r["mean_final_gap"])["lr"]
-        for name in NAMES
-    }
-    return rows, best
+    return rows, choose(rows)
 
 
 def compare(
@@ -176,6 +191,7 @@ def method(grid: list[dict], result: dict) -> dict:
                    "groups_per_iteration": "one per prompt", "gradient_steps": g.iterations * g.epochs}
     tuning_seeds = sorted({s for row in grid for s in row.get("seeds", [])})
     comparison_seeds = list(result["seeds"])
+    rule = choose(grid)
 
     def edge(rate: float) -> dict:
         at = "lowest" if rate == min(LR_GRID) else "highest" if rate == max(LR_GRID) else None
@@ -185,7 +201,8 @@ def method(grid: list[dict], result: dict) -> dict:
         "selection": (
             "per algorithm, the learning rate in lr_grid with the lowest mean final gap "
             f"over seeds {tuning_seeds} at that algorithm's default budget, against the "
-            "common target pi*_beta"
+            "common target pi*_beta (rule_lr); the comparison runs at comparison_lr, which "
+            "is rule_lr except for grpo (see grpo_rate_exception)"
         ),
         "lr_grid": list(LR_GRID),
         "tuning_seeds": tuning_seeds,
@@ -195,7 +212,10 @@ def method(grid: list[dict], result: dict) -> dict:
             "when the seeds are the same, the comparison's reported means are those the "
             "selection minimised, so they are slightly optimistic"
         ),
-        "grid_edge": {name: edge(result["lr"][name]) for name in NAMES},
+        "rule_lr": rule,
+        "comparison_lr": dict(result["lr"]),
+        "grid_edge": {name: edge(rate) for name, rate in rule.items()},
+        "grid_edge_note": "grid_edge describes the rate the lowest-final-gap rule picked",
         "target": f"pi*_beta, beta = {result['beta']}",
         "world": "DEFAULT_WORLD",
         "reward_mode": REWARD_MODE,
@@ -216,8 +236,29 @@ def method(grid: list[dict], result: dict) -> dict:
             "dpo": "labelled preference pairs (constant over a run)",
             "ppo_rm": "reward-model calls; the model was fitted on n_pairs labelled pairs",
         },
+        **_grpo_exception(grid, rule, result["lr"]),
         "points": "final gap of dpo and ppo_rm at each n_pairs in PAIR_COUNTS, one entry per seed",
     }
+
+
+def _grpo_exception(grid: list[dict], rule: dict, used: dict) -> dict:
+    if "grpo" not in rule or "grpo" not in used:
+        return {}
+    return {"grpo_rate_exception": {
+        "rule_lr": rule["grpo"],
+        "used_lr": used["grpo"],
+        "reason": (
+            f"published grpo runs at {used['grpo']:g}, the rate chosen for grpo_ppo_like, "
+            f"not at {rule['grpo']:g}, the rate the lowest-final-gap rule picks for it. "
+            "Published GRPO does not aim at pi*_beta, so the rule picks whichever rate gets "
+            "least far within the budget; at one shared rate the two GRPO variants differ "
+            "only in their two switches (std_normalize, kl_in)"
+        ),
+        "mean_final_gap_by_lr": [
+            {"lr": r["lr"], "mean_final_gap": r["mean_final_gap"]}
+            for r in grid if r["name"] == "grpo"
+        ],
+    }}
 
 
 def save(path: Path, grid: list[dict], result: dict) -> None:
