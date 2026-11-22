@@ -2,13 +2,14 @@
 
 Nothing here touches pyplot, so no figure outlives its caller and `plt.show` is never
 called. Figures have a transparent background and mid-grey text and axes, which read on
-both light and dark notebook themes; series colours sit in the lightness band that
-holds 3:1 contrast on both. Colours are never the only cue: curves carry a legend,
+both light and dark notebook themes; every series colour has a contrast of about 3:1 or
+better against both a white (#fcfcfb) and a dark (#1a1a19) surface. Colours are never the only cue: curves carry a legend,
 trajectory ends carry markers.
 
 Axis notation is fixed: drift is KL(π ‖ π_ref), the gap is β·KL(π ‖ π*), reward is E[r].
 """
 
+import itertools
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import Literal
@@ -31,8 +32,10 @@ COLORS: dict[str, str] = {
     "ppo_rm": "#e66767",  # red
 }
 
-# For free-form labels: none of these is a COLORS value.
-_CYCLE = ["#a0622d", "#4fc3d9", "#0ca30c", "#b0b52a", "#c04fc0", "#e6a0a0"]
+# For free-form labels: none of these is a COLORS value, the first ones are far from
+# the ppo blue, and each holds >= 3:1 on both a light and a dark surface.
+_CYCLE = ["#2a9d3f", "#b34fb3", "#8f8f1f", "#2a9cb0", "#c07a45"]
+_BAND_ALPHA = 0.4
 
 _INK = "#8a8a8a"
 _GRID = "#8a8a8a"
@@ -86,7 +89,7 @@ def _figure(ncols: int = 1, width: float = 4.6, height: float = 3.6) -> tuple[Fi
 
 def _colors(labels: Sequence[str]) -> dict[str, str]:
     """COLORS for known keys; free-form ones take the default cycle in order."""
-    free = iter(_CYCLE * 2)
+    free = itertools.cycle(_CYCLE)
     return {k: COLORS[k] if k in COLORS else next(free) for k in labels}
 
 
@@ -94,9 +97,28 @@ def _as_list(run: RunLike) -> list[Run]:
     return list(run) if isinstance(run, list) else [run]
 
 
-def _stack(runs: list[Run], getter: Callable[[Run], Sequence[float]]) -> np.ndarray:
-    n = min(len(getter(r)) for r in runs)
-    return np.array([list(getter(r))[:n] for r in runs], dtype=float)
+def _group(name: str, entry: RunLike, x: str) -> tuple[list[Run], np.ndarray]:
+    """The runs behind one label and their shared x values. Seeds are only averaged when
+    they recorded at exactly the same x values; nothing is truncated or intersected."""
+    group = _as_list(entry)
+    if not group:
+        raise ValueError(f"{name!r}: the list of runs is empty")
+    xs = list(getattr(group[0], x))
+    for i, run in enumerate(group[1:], start=1):
+        if list(getattr(run, x)) != xs:
+            raise ValueError(
+                f"{name!r}: run {i} recorded different {x} values from run 0, "
+                "so the seeds cannot be averaged point by point"
+            )
+    return group, np.array(xs, dtype=float)
+
+
+def _stack(name: str, runs: list[Run], getter: Callable[[Run], Sequence[float]]) -> np.ndarray:
+    """[n_runs, n_points] array of one per-point quantity."""
+    rows = [list(getter(r)) for r in runs]
+    if len({len(row) for row in rows}) != 1:
+        raise ValueError(f"{name!r}: the runs record different numbers of points")
+    return np.array(rows, dtype=float)
 
 
 def _legend(fig: Figure, ax_with_handles) -> None:
@@ -116,12 +138,11 @@ def training_curves(
         fig, axes = _figure(len(keys), width=4.2)
         for ax, key in zip(axes, keys):
             for name, entry in runs.items():
-                group = _as_list(entry)
-                xs = _stack(group, lambda r: getattr(r, x))[0]
-                ys = _stack(group, lambda r, key=key: r.metrics[key])
+                group, xs = _group(name, entry, x)
+                ys = _stack(name, group, lambda r, key=key: r.metrics[key])
                 ax.plot(xs, ys.mean(0), color=colors[name], label=name)
                 if len(group) > 1:
-                    ax.fill_between(xs, ys.min(0), ys.max(0), color=colors[name], alpha=0.2, lw=0)
+                    ax.fill_between(xs, ys.min(0), ys.max(0), color=colors[name], alpha=_BAND_ALPHA, lw=0)
             ax.set_xlabel("gradient steps" if x == "steps" else "units of feedback")
             ax.set_ylabel(_LABELS.get(key, key))
             if key == "gap":
@@ -142,19 +163,19 @@ def frontier_plot(
         fig, (ax,) = _figure(width=6.0, height=4.2)
         fx, fy = zip(*frontier)
         ax.plot(fx, fy, color=COLORS["optimum"], ls="--", label="frontier π*_β")
+        starts: list[tuple[float, float]] = []
         for name, entry in runs.items():
-            group = _as_list(entry)
-            xs = _stack(group, lambda r: r.metrics["kl"]).mean(0)
-            ys = _stack(group, lambda r: r.metrics["reward"]).mean(0)
+            group, _ = _group(name, entry, "steps")
+            xs = _stack(name, group, lambda r: r.metrics["kl"]).mean(0)
+            ys = _stack(name, group, lambda r: r.metrics["reward"]).mean(0)
             ax.plot(xs, ys, color=colors[name], label=name, lw=1.6)
-            ax.plot(xs[0], ys[0], "o", mfc="none", color=colors[name], ms=6)
             ax.plot(xs[-1], ys[-1], "o", color=colors[name], ms=8, mec="none")
+            starts.append((xs[0], ys[0]))
+        if starts:  # every run starts from the reference policy: one marker
+            ax.plot(*starts[0], "o", mfc="none", color=COLORS["ref"], ms=7, mew=1.6, label="start")
         for name, (tx, ty) in (targets or {}).items():
-            ax.plot(tx, ty, "D", color=COLORS["optimum"], ms=7, mec="none")
-            ax.annotate(
-                name, (tx, ty), xytext=(-8, 6), textcoords="offset points", fontsize=9,
-                color=_INK, ha="right",
-            )
+            # labelled through the legend, which sits outside the axes and covers nothing
+            ax.plot(tx, ty, "D", color=COLORS["optimum"], ms=7, mec="none", ls="none", label=name)
         if ceiling is not None:
             ax.axvline(ceiling, color=_INK, ls=":", lw=1.4, label=f"drift ceiling ({ceiling:.2f})")
         ax.set_xlabel(DRIFT)
@@ -169,6 +190,8 @@ def ratio_hist(ratios: Tensor, clip: float) -> Figure:
     r = ratios.detach().flatten().cpu().numpy()
     lo, hi = 1 - clip, 1 + clip
     outside = float(((r < lo) | (r > hi)).mean()) * 100
+    left, right = min(r.min(), lo), max(r.max(), hi)
+    pad = 0.05 * (right - left)
     with _style():
         fig, (ax,) = _figure(width=5.0, height=3.4)
         ax.hist(r, bins=50, color=COLORS["ppo"], alpha=0.85)
@@ -178,6 +201,7 @@ def ratio_hist(ratios: Tensor, clip: float) -> Figure:
                 name, (v, 1), xycoords=("data", "axes fraction"), xytext=(4 * side, -12),
                 textcoords="offset points", fontsize=9, ha="left" if side > 0 else "right",
             )
+        ax.set_xlim(left - pad, right + pad)
         ax.set_xlabel("ratio π_θ / π_old")
         ax.set_ylabel("count")
         ax.set_title(f"{outside:.1f}% of ratios outside [{lo:.2f}, {hi:.2f}]")
@@ -247,14 +271,13 @@ def feedback_points(
     with _style():
         fig, (ax,) = _figure(width=6.0, height=4.0)
         for name, entry in lines.items():
-            group = _as_list(entry)
-            xs = _stack(group, lambda r: r.feedback)[0]
-            ys = _stack(group, lambda r: r.metrics["gap"])
+            group, xs = _group(name, entry, "feedback")
+            ys = _stack(name, group, lambda r: r.metrics["gap"])
             keep = xs > 0  # the log axis has no zero
             ax.plot(xs[keep], ys.mean(0)[keep], color=colors[name], label=name)
             if len(group) > 1:
                 ax.fill_between(xs[keep], ys.min(0)[keep], ys.max(0)[keep],
-                                color=colors[name], alpha=0.2, lw=0)
+                                color=colors[name], alpha=_BAND_ALPHA, lw=0)
         for name, pts in points.items():
             px, py = zip(*pts)
             ax.plot(px, py, "o", color=colors[name], ms=8, mec="none", label=name)

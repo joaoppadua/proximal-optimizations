@@ -4,6 +4,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import numpy as np
 import pytest
 import torch
 from matplotlib.figure import Figure
@@ -76,7 +77,7 @@ def test_training_curves_free_labels_avoid_palette_and_feedback_axis():
     fig = training_curves({f"β = {b}": fake_run(b) for b in range(8)}, x="feedback")
     colors = {line.get_color() for line in fig.axes[0].get_lines()}
     assert not colors & set(COLORS.values())
-    assert len(colors) >= 6
+    assert len(colors) == len(plots._CYCLE)
 
 
 def test_training_curves_works_after_json_roundtrip():
@@ -149,3 +150,123 @@ def test_reveal_contains_question_and_answer():
     html = nbtools.reveal("What is q?", "The answer is a.")
     assert "What is q?" in html.text
     assert "The answer is a." in html.text
+
+
+# --- multi-seed alignment and aggregation ---------------------------------------
+
+
+def seed_runs() -> list[Run]:
+    return [fake_run(0.0), fake_run(0.3), fake_run(-0.2)]
+
+
+def _band_edges(ax) -> dict[float, tuple[float, float]]:
+    """x -> (lower, upper) read back from the first fill_between polygon."""
+    verts = ax.collections[0].get_paths()[0].vertices
+    edges: dict[float, tuple[float, float]] = {}
+    for x in sorted(set(np.round(verts[:, 0], 9))):
+        ys = verts[np.isclose(verts[:, 0], x), 1]
+        edges[x] = (ys.min(), ys.max())
+    return edges
+
+
+def test_training_curves_mean_and_band_match_per_step_stats():
+    runs = seed_runs()
+    fig = training_curves({"grpo": runs}, keys=("reward", "gap"))
+    for ax, key in zip(fig.axes, ("reward", "gap")):
+        ys = np.array([r.metrics[key] for r in runs])
+        np.testing.assert_allclose(ax.get_lines()[0].get_ydata(), ys.mean(0))
+        np.testing.assert_allclose(ax.get_lines()[0].get_xdata(), runs[0].steps)
+        edges = _band_edges(ax)
+        np.testing.assert_allclose([e[0] for e in edges.values()], ys.min(0))
+        np.testing.assert_allclose([e[1] for e in edges.values()], ys.max(0))
+
+
+def test_training_curves_feedback_axis_uses_feedback():
+    runs = seed_runs()
+    fig = training_curves({"grpo": runs}, keys=("reward",), x="feedback")
+    np.testing.assert_allclose(fig.axes[0].get_lines()[0].get_xdata(), runs[0].feedback)
+
+
+def test_frontier_plot_mean_and_band_both_coordinates():
+    runs = seed_runs()
+    fig = frontier_plot([(0.1, 0.5), (0.5, 0.9)], {"grpo": runs})
+    ax = fig.axes[0]
+    trajectory = next(ln for ln in ax.get_lines() if ln.get_label() == "grpo")
+    np.testing.assert_allclose(trajectory.get_xdata(), np.mean([r.metrics["kl"] for r in runs], 0))
+    np.testing.assert_allclose(
+        trajectory.get_ydata(), np.mean([r.metrics["reward"] for r in runs], 0)
+    )
+
+
+def test_frontier_plot_single_start_marker_with_several_runs():
+    fig = frontier_plot([(0.1, 0.5), (0.5, 0.9)], {"a": fake_run(), "b": fake_run(0.1)})
+    hollow = [ln for ln in fig.axes[0].get_lines() if ln.get_marker() == "o"
+              and ln.get_markerfacecolor() == "none"]
+    assert len(hollow) == 1
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        pytest.param(lambda: [fake_run(), truncated(fake_run())], id="unequal-length"),
+        pytest.param(lambda: [fake_run(), shifted(fake_run())], id="same-length-other-grid"),
+        pytest.param(list, id="empty"),
+    ],
+)
+@pytest.mark.parametrize("which", ["training_curves", "frontier_plot", "feedback_points"])
+def test_multi_seed_misalignment_raises(bad, which):
+    group = bad()
+    if which == "training_curves":
+        call = lambda: training_curves({"grpo": group})
+    elif which == "frontier_plot":
+        call = lambda: frontier_plot([(0.1, 0.5)], {"grpo": group})
+    else:
+        call = lambda: feedback_points({"grpo": group}, {})
+    with pytest.raises(ValueError, match="grpo"):
+        call()
+
+
+def test_misalignment_message_names_first_differing_run():
+    good, other = fake_run(), fake_run(0.1)
+    bad = shifted(fake_run())
+    with pytest.raises(ValueError, match=r"run 2"):
+        training_curves({"grpo": [good, other, bad]})
+
+
+def test_feedback_axis_checks_feedback_not_steps():
+    a, b = fake_run(), fake_run(0.1)
+    b.feedback = [f + 1 for f in b.feedback]
+    training_curves({"grpo": [a, b]})  # same steps: fine on the steps axis
+    with pytest.raises(ValueError, match="feedback"):
+        training_curves({"grpo": [a, b]}, x="feedback")
+
+
+def test_many_free_labels_cycle_without_error():
+    fig = training_curves({f"run {i}": fake_run(i) for i in range(15)}, keys=("reward",))
+    assert len(fig.axes[0].get_lines()) == 15
+
+
+def test_ratio_hist_range_covers_data_and_clip_lines():
+    r = torch.cat([torch.full((50,), 0.3), torch.full((50,), 1.9)])
+    ax = ratio_hist(r, 0.2).axes[0]
+    lo, hi = ax.get_xlim()
+    assert lo <= 0.3 and hi >= 1.9
+    lo, hi = ratio_hist(torch.full((10,), 1.0), 0.2).axes[0].get_xlim()
+    assert lo <= 0.8 and hi >= 1.2
+
+
+def test_free_label_cycle_avoids_blue_first():
+    assert plots._CYCLE[0] != COLORS["ppo"]
+    assert not set(plots._CYCLE) & set(COLORS.values())
+
+
+def truncated(run: Run) -> Run:
+    run.steps, run.feedback = run.steps[:-1], run.feedback[:-1]
+    run.metrics = {k: v[:-1] for k, v in run.metrics.items()}
+    return run
+
+
+def shifted(run: Run) -> Run:
+    run.steps = [s + 1 for s in run.steps]
+    run.feedback = [f + 1 for f in run.feedback]
+    return run
