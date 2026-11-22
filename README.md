@@ -114,3 +114,19 @@ make lint       # ruff
 - `docs/equation-check.md`: every equation the notebooks use, checked against its source
   paper, and the facts recorded from the papers.
 - `docs/olmo-facts.md`: how OLMo 2 1B was post-trained, each fact quoted from its source.
+
+## Licence
+
+Copyright © 2026 João Pedro Pádua.
+
+Everything in this repository (the notebooks, the `proxopt` package, the scripts, the
+documents and the committed result files) is licensed under the
+[Creative Commons Attribution 4.0 International Public License](https://creativecommons.org/licenses/by/4.0/)
+(CC BY 4.0); the full text is in `LICENSE`. You may share and adapt it, including
+commercially, provided you give appropriate credit, link to the licence and say whether you
+changed anything. To give credit, name the author and link to this repository.
+
+The licence covers this work only. The OLMo 2 checkpoints and the preference dataset named
+under "Precomputed data" belong to their authors and keep their own licences; this repository
+does not redistribute them, and holds only numeric measurements and identifiers derived from
+them.
