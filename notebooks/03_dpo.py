@@ -209,8 +209,9 @@ def _(mo):
     $$
 
     So with enough pairs, covering every response, DPO with parameter $\beta$ approaches
-    $\pi^*_{\beta\tau}$, not $\pi^*_\beta$. $\beta$ and $\tau$ enter only through their
-    product: $\beta = 0.4$ on $\tau = 0.25$, $\beta = 0.2$ on $\tau = 0.5$ and $\beta = 0.1$
+    $\pi^*_{\beta\tau}$, not $\pi^*_\beta$. The target depends on $\beta$ and $\tau$ only
+    through their product (the loss does not: $\beta$ scales every margin, $\tau$ sets the
+    labels): $\beta = 0.4$ on $\tau = 0.25$, $\beta = 0.2$ on $\tau = 0.5$ and $\beta = 0.1$
     on $\tau = 1$ all aim at $\pi^*_{0.1}$, and the data cannot tell DPO's $\beta$ from the
     sharpness of the annotators. DPO aims at notebook 00's yardstick $\pi^*_\beta$ only
     when $\tau = 1$. Every gap in this notebook is therefore measured against
@@ -410,14 +411,17 @@ def _(mo):
                             show_value=True)
     tau_run = mo.ui.slider(steps=[0.05, 0.1, 0.25, 0.5, 1.0], value=0.25,
                            label="preference noise τ", show_value=True)
-    pairs_run = mo.ui.slider(steps=[100, 300, 1000, 2000, 4000, 8000, 16000, 20000], value=4000,
+    pairs_run = mo.ui.slider(steps=[100, 300, 1000, 2000, 4000, 8000, 16000], value=4000,
                              label="number of pairs", show_value=True)
     source_run = mo.ui.radio({"π_ref": "ref", "uniform": "uniform"}, value="π_ref",
                              label="pairs drawn from", inline=True)
     lr_run = mo.ui.dropdown({"3e-4 (default)": 3e-4, "3e-3": 3e-3}, value="3e-4 (default)",
                             label="learning rate")
+    steps_run = mo.ui.radio({"300": 300, "1,200": 1200}, value="300",
+                            label="gradient steps (1,200: 13 to 21 s per change)",
+                            inline=True)
     seed_run = mo.ui.number(start=0, stop=99, step=1, value=0, label="seed")
-    return beta_run, lr_run, pairs_run, seed_run, source_run, tau_run
+    return beta_run, lr_run, pairs_run, seed_run, source_run, steps_run, tau_run
 
 
 @app.cell
@@ -430,10 +434,13 @@ def _(
     pairs_run,
     seed_run,
     source_run,
+    steps_run,
     tau_run,
     train_dpo,
 ):
-    dpo_cfg = DPOConfig(beta=beta_run.value, lr=lr_run.value, seed=int(seed_run.value))
+    dpo_cfg = DPOConfig(
+        beta=beta_run.value, lr=lr_run.value, steps=steps_run.value, seed=int(seed_run.value)
+    )
     tau = tau_run.value
     n_pairs = pairs_run.value
     source = source_run.value
@@ -449,15 +456,16 @@ def _(
                 set of labelled pairs. No response is sampled during training. Reward,
                 drift and the gap against $\pi^*_{{\beta\tau}}$ are exact, every
                 {dpo_cfg.eval_every} steps. The DPO loss is recorded at the same steps over
-                the whole training set and over {holdout_pairs:,} *held-out* pairs: fresh pairs from
-                the same source and $\tau$, drawn with seed + 100, never trained on. A
-                control change resamples the pairs, retrains and redraws (about 4 s at 4,000
-                pairs, about 7 s at 20,000, the top of the range); runs are cached, so
-                returning to a setting is instant.
+                the whole training set and over {holdout_pairs:,} *held-out* pairs: fresh
+                pairs from the same source and $\tau$, drawn with seed + 100, never trained
+                on. A control change resamples the pairs, retrains and redraws: at 300
+                steps about 4 s at 4,000 pairs and 6 s at 16,000, the top of the range;
+                **at 1,200 steps about 13 s at 4,000 pairs and 21 s at 16,000.** Runs are
+                cached, so returning to a setting is instant.
                 """
             ),
             mo.hstack([beta_run, tau_run, pairs_run], justify="start"),
-            mo.hstack([source_run, lr_run, seed_run], justify="start"),
+            mo.hstack([source_run, lr_run, steps_run, seed_run], justify="start"),
         ]
     )
     return dpo_cfg, dpo_run, n_pairs, source, tau
@@ -594,7 +602,8 @@ def _(
         "the trained π_θ": prefs.covered_mass(DEFAULT_WORLD, _data, _logp),
     }
     _rows = "\n".join(
-        f"| {k} | {line_distance(_est, _true, w):.3f} | "
+        f"| {k} | {line_distance(torch.zeros_like(_true), _true, w):.3f} "
+        f"| {line_distance(_est, _true, w):.3f} | "
         + (f"{_share[k]:.1%}" if k in _share else "")
         + " |"
         for k, w in _weights.items()
@@ -618,11 +627,11 @@ def _(
             mo.hstack(
                 [
                     plots.scatter_true_vs_estimate(
-                        _true, _est, mask=_cov, mask_labels=_labels,
+                        true=_true, estimate=_est, mask=_cov, mask_labels=_labels,
                         xlabel="r/τ, centred", ylabel="implicit reward r̂, centred",
                     ),
                     plots.scatter_true_vs_estimate(
-                        _true[_top], _est[_top], mask=_cov[_top], mask_labels=_labels,
+                        true=_true[_top], estimate=_est[_top], mask=_cov[_top], mask_labels=_labels,
                         xlabel="r/τ, centred (90% of π*_βτ)", ylabel="implicit reward r̂, centred",
                     ),
                 ],
@@ -631,11 +640,12 @@ def _(
             mo.md(
                 "Distance from the line, as a root-mean-square of r̂ − r/τ after removing the "
                 "best constant for each prompt (so it measures exactly what DPO can "
-                "recover), with each response weighted as named; and the share of that same "
-                "weight that falls on responses covered by a pair (the first row: the "
-                "fraction of responses covered).\n\n"
-                "| responses weighted by | distance from the line | share covered |\n"
-                "|---|---|---|\n" + _rows
+                "recover), with each response weighted as named, at the start (π_θ = π_ref, "
+                "so r̂ = 0) and at the end of the run; and the share of that same weight "
+                "that falls on responses covered by a pair (the first row: the fraction of "
+                "responses covered).\n\n"
+                "| responses weighted by | distance at the start | at the end | share covered |\n"
+                "|---|---|---|---|\n" + _rows
             ),
         ]
     )
@@ -648,10 +658,11 @@ def _(mo):
     **What carries over to real LLMs, and what does not.** The *shape* carries over: a
     fixed dataset of preference triples, a loss on summed sequence log-probabilities, the
     reference's log-probabilities computed once by a frozen copy, minibatches and no
-    sampling. So does the algebra: steps 1 to 7 hold for any policy, so for any
-    Bradley–Terry data DPO's $\beta$ and the scale of the annotators' reward enter only
-    through their product, and the implicit reward is defined only up to a constant per
-    prompt. What does not carry over: here every response can be enumerated, so the gap,
+    sampling. So does the algebra, which uses nothing particular to this world (only a
+    reference that gives every response some probability): for any reward and any
+    Bradley–Terry annotators, the policy DPO aims at depends on its $\beta$ and on the
+    scale of the annotators' reward only through their product, and the implicit reward is
+    defined only up to a constant per prompt. What does not carry over: here every response can be enumerated, so the gap,
     the coverage and the mass a dataset covers are exact, and the true reward and the true
     $\tau$ are known. For an LLM none of these can be computed; only the losses can, and
     the measurements below show that a falling training loss does not mean a falling
@@ -748,10 +759,10 @@ def _(mo, reveal):
                 "between the two final policies is 0.11–0.13. A third pair with the same "
                 "product, β = 1, τ = 0.1, ends at 0.021–0.022. So step 7 holds for what the "
                 "runs aim at, and the gap of every one of them falls, but at a finite budget "
-                "the sharper the labels the closer the run gets: τ = 0.1, 0.25, 0.5 end in that "
-                "order. Two things change together here, the noise of the labels and the β "
-                "inside the loss (and with it the scale of every margin), and these runs do not "
-                "separate them. The losses of the two settings are not comparable with each "
+                "they end in the order (β, τ) = (1, 0.1), (0.4, 0.25), (0.2, 0.5): sharper "
+                "labels together with a larger β. Two things change together along that "
+                "order, the noise of the labels and the β inside the loss (and with it the "
+                "scale of every margin), and these runs do not separate them. The losses of the two settings are not comparable with each "
                 "other: their pairs carry different labels.",
             ),
             product_button,
@@ -784,39 +795,43 @@ def _(mo, reveal):
                 "*uniform* and compare. Uniform pairs spread over all 32,768 responses of a "
                 "prompt; pairs from π_ref repeat the responses π_ref likes. Which gives the "
                 "lower gap, and what do the scatter and the table show?",
-                "Measured, 300 steps. **Pairs from π_ref end with the lower gap at every size "
-                "from 1,000 pairs up:** 0.063–0.079 against 0.088–0.093 for uniform pairs at "
-                "1,000, 0.030–0.033 against 0.055–0.060 at 4,000, 0.021–0.023 against "
-                "0.044–0.047 at 16,000 and 0.022–0.023 against 0.041–0.044 at 20,000. (At 100 "
-                "pairs both end above the start, 0.19–0.23 against 0.16–0.20; see item 4.) Run "
-                "on to 1,200 steps (set in code, not reachable from the controls), the order "
-                "holds: lowest gap 0.029–0.031 against 0.054–0.058 at 4,000 pairs, 0.020–0.022 "
-                "against 0.037–0.041 at 16,000. **Why: coverage by count is not coverage by "
-                "probability.** At 4,000 pairs uniform pairs touch more responses (5.9% of "
-                "them, against 2.6–2.7%), but those responses carry 4.9–5.9% of π_ref's "
-                "probability, against 70–71% for pairs from π_ref, and 4.4–5.6% of π*_0.1's, "
-                "against 69–70% (at 16,000 pairs: 21.7% against 6.3% of responses, 21–22% "
-                "against 86% of π_ref's mass). The gap is an expectation under the trained "
-                "policy, which starts at π_ref, so it is decided where π_ref and π*_βτ put "
-                "their mass. Uniform pairs also move the policy less: drift 0.32–0.38 against "
-                "0.58–0.61 at 4,000 pairs, 0.59–0.70 against 0.82–0.95 at 1,000. **The scatter and the table**, at 4,000 pairs (distance from the "
-                "line, π_ref pairs against uniform pairs): every response alike, 0.41–0.45 "
-                "against 0.37–0.39, so uniform pairs win on the plain scatter; covered "
-                "responses only, 0.35–0.38 against 0.37–0.39; uncovered only, 0.42–0.46 against "
-                "0.37–0.39; weighted by π_ref 0.33–0.36 against 0.49–0.52, by π*_βτ 0.31–0.32 "
-                "against 0.34–0.38, by the trained policy 0.31–0.34 against 0.45–0.47. The "
-                "expectation that uncovered responses are unconstrained and scatter away from "
-                "the line is only partly met: with pairs from π_ref they do sit further from it "
-                "than covered ones, but not far; the network generalises from the pairs it saw "
-                "(compare 100 pairs, where the distance is about 1.0). On covered responses the "
-                "two are level; uniform pairs win on the uncovered majority, which carries "
-                "almost no probability, and lose wherever the probability is. **Not label noise:** in "
-                "a diagnostic copy of the training loop that replaces each pair's drawn label "
-                "by its probability σ((r_w − r_l)/τ) (information no real dataset has; see item "
-                "5), the same 4,000 pairs give 0.0123–0.0125 from π_ref against 0.032–0.033 "
-                "uniform. So uniform pairs are worse here at every size and budget measured, "
-                "because of where they fall. A unit test shows they are not worse as such: on a "
-                "9-response world, 50,000 uniform pairs cover every response and DPO converges.",
+                "Measured, 300 steps unless stated. **Pairs from π_ref end with the lower gap "
+                "at every size from 1,000 pairs up:** 0.063–0.079 against 0.088–0.093 for "
+                "uniform pairs at 1,000, 0.030–0.033 against 0.055–0.060 at 4,000 and "
+                "0.021–0.023 against 0.044–0.047 at 16,000. (At 100 pairs both end above the "
+                "start, 0.19–0.23 against 0.16–0.20; see item 4.) At 1,200 steps (the steps "
+                "control) the order holds: lowest gap 0.029–0.031 against 0.054–0.058 at 4,000 "
+                "pairs, 0.020–0.022 against 0.037–0.041 at 16,000. **Coverage by count is not "
+                "coverage by probability.** At 4,000 pairs uniform pairs touch more responses "
+                "(5.9% of them, against 2.6–2.7%), but those responses carry 4.9–5.9% of "
+                "π_ref's probability, against 70–71% for pairs from π_ref, and 4.4–5.6% of "
+                "π*_0.1's, against 69–70% (at 16,000 pairs: 21.7% against 6.3% of responses, "
+                "21–22% against 86% of π_ref's mass). The gap is an expectation under the "
+                "trained policy, which starts at π_ref, so it is decided where π_ref and π*_βτ "
+                "put their probability. Uniform pairs also move the policy less: drift "
+                "0.32–0.38 against 0.58–0.61 at 4,000 pairs, 0.59–0.70 against 0.82–0.95 at "
+                "1,000. **The scatter and the table** at 4,000 pairs, distance from the line "
+                "at the start (r̂ = 0) → at step 300, pairs from π_ref, then uniform pairs. "
+                "Every response alike: 0.495 → 0.415–0.455, and 0.495 → 0.373–0.388, so "
+                "uniform pairs end closer on the plain scatter. Covered responses only: "
+                "0.626–0.629 → 0.354–0.382, and 0.491–0.496 → 0.368–0.387. Uncovered only: "
+                "0.490 → 0.415–0.456, and 0.495 → 0.374–0.388. Weighted by π_ref: 0.670 → "
+                "0.328–0.355, and 0.670 → 0.490–0.520. By π*_βτ: 0.341 → 0.307–0.318, and "
+                "0.341 → 0.335–0.380. So with pairs from π_ref the covered responses move a "
+                "long way towards the line and the uncovered ones only a little (0.490 to "
+                "0.415–0.456), which is close to the expectation that uncovered responses are "
+                "left unconstrained. With uniform pairs, covered and uncovered responses move "
+                "by the same amount, and end level with the π_ref pairs' covered ones; what "
+                "this measurement does not show is why. Uniform pairs come out ahead on the "
+                "uncovered majority, which carries almost no probability, and behind wherever "
+                "the probability is. **Not label noise:** with each pair's drawn label "
+                "replaced by its probability σ((r_w − r_l)/τ) (information no real dataset "
+                "has; see item 5 and `scripts/dpo_label_diagnostic.py`), the same 4,000 pairs "
+                "reach 0.0123–0.0125 from π_ref against 0.032–0.033 uniform at step 300. So "
+                "uniform pairs are worse here at every size and budget measured, because of "
+                "where they fall. They are not useless: a unit test shows that on a 9-response "
+                "world 50,000 uniform pairs, which cover every response, bring DPO to its "
+                "target. That test does not compare sources.",
             ),
             source_button,
         ]
@@ -876,33 +891,37 @@ def _(mo, reveal):
                 "Measured, 4,000 pairs from π_ref. **At 3e-3** the gap falls fast, to "
                 "0.042–0.046 at steps 10–20, then rises while the training loss keeps falling "
                 "(to 0.497–0.503 at step 300): it ends at 0.093–0.108, above its start of "
-                "0.1022 in seeds 0 and 1, with drift 1.39–1.46 against the target's 0.64. "
-                "The held-out loss turns with it: lowest 0.640–0.644 at steps 10–30, then up to 0.677–0.696. "
-                "**At the default 3e-4** the same thing happens later and more slowly: the gap "
-                "is lowest at 0.029–0.031 at steps 140–210 and ends at 0.030–0.033; the "
-                "held-out loss is lowest at steps 150–210 and has risen by only 0.0010–0.0063 "
-                "at step 300, too little to see. Run on to 1,200 steps (set in code), the turn "
-                "is plain: the gap is 0.030–0.033, 0.036–0.041, 0.043–0.048 and 0.050–0.056 at "
-                "steps 300, 600, 900 and 1,200, the held-out loss ends at 0.651–0.657 (lowest "
-                "0.628–0.636), and the drift at 0.91–0.93. So the default rate does not escape "
-                "it; 300 steps at 3e-4 behave like stopping early. One sign was visible all "
-                "along: at the gap's lowest point the training loss (0.588–0.596) is already "
-                "below the 0.602–0.611 that π*_0.1 itself scores on the same pairs. **Why, as "
-                "far as measured.** The structural fact is mathematical: 98.5–98.8% of these "
-                "pairs occur once, each with its winner fixed, and the loss of such a pair "
-                "keeps falling as its margin grows (the left plot in the Intuition), so, as a "
-                "function of the implicit rewards, the dataset's loss has no finite "
-                "minimiser. To test whether that drives the turn, a diagnostic copy of the "
-                "training loop (not part of the package) keeps the same pairs, and so the same coverage, and replaces each drawn label by its "
-                "probability σ((r_w − r_l)/τ), which makes every pair's best margin finite. It "
-                "uses the true reward, so it is a diagnostic, not an algorithm. There is no "
-                "turn: at 3e-3 its gap falls to 0.0076–0.0083 at step 300 and is still falling; "
-                "at 3e-4 it is 0.0123–0.0125 at step 300 and 0.0078–0.0080 at step 1,200, "
-                "lowest at steps 1,170–1,200. That supports the hypothesis that the single "
-                "drawn labels, with no finite best margin, cause the turn. It also says that "
-                "most of the default run's gap at step 300 (0.030–0.033, against 0.012 with "
-                "the same pairs) comes from the drawn labels, not from which responses the "
-                "pairs cover. It does not show which pairs move the policy the wrong way.",
+                "0.1022 in seeds 0 and 1, with drift 1.39–1.46 against the target's 0.64. The "
+                "held-out loss turns with it: lowest 0.640–0.644 at steps 10–30, then up to "
+                "0.677–0.696. **At the default 3e-4** the same thing happens later and more "
+                "slowly: the gap is lowest at 0.029–0.031 at steps 140–210 and ends at "
+                "0.030–0.033; the held-out loss is lowest at steps 150–210 and has risen by "
+                "only 0.0010–0.0063 at step 300, too little to see. Set the steps to 1,200 and "
+                "the turn is plain: the gap is 0.030–0.033, 0.036–0.041, 0.043–0.048 and "
+                "0.050–0.056 at steps 300, 600, 900 and 1,200, the held-out loss ends at "
+                "0.651–0.657 (lowest 0.628–0.636), and the drift at 0.91–0.93. So the default "
+                "rate does not escape it; 300 steps at 3e-4 behave like stopping early. One "
+                "sign was visible all along: at the gap's lowest point the training loss "
+                "(0.588–0.596) is already below the 0.602–0.611 that π*_0.1 itself scores on "
+                "the same pairs. **The labels, not the coverage.** 98.5–98.8% of these pairs "
+                "occur once, each with one drawn winner. Two diagnostic runs "
+                "(`scripts/dpo_label_diagnostic.py`, which has its own copy of the training "
+                "loop) keep the same pairs, and so the same coverage, and the same minibatch "
+                "order, and change only the label each pair carries. With its probability "
+                "σ((r_w − r_l)/τ), computed from the true reward (an oracle, not an "
+                "algorithm), every pair has a finite best margin and there is no label noise, "
+                "and there is no turn: at 3e-3 the gap is 0.0076–0.0083 at step 300 and still "
+                "falling; at 3e-4 it is 0.0123–0.0125 at step 300 and 0.0078–0.0080 at step "
+                "1,200. With a noisy label that still has a finite best margin, (k + 0.5)/5 "
+                "for k wins in 4 fresh draws, the gap turns again, less: at 3e-3 it is lowest "
+                "at 0.026–0.028 at steps 80–130 and ends at 0.034–0.038 at step 300; at 3e-4 "
+                "lowest at 0.020–0.024 at steps 220–420 and 0.023–0.028 at step 1,200. "
+                "So the turn comes from the drawn labels, not from which responses the pairs "
+                "cover, and most of the default run's gap at step 300 (0.030–0.033, against "
+                "0.012 with oracle labels on the same pairs) does too. What these runs do not "
+                "separate is the two things a single drawn label brings: noise, and a best "
+                "margin that is infinite (the left plot in the Intuition). A finite best "
+                "margin alone does not remove the turn.",
             ),
             lr_button,
         ]
@@ -936,17 +955,20 @@ def _(cite, mo):
     authors report that "length-normalized DPO works best". The DPO stage of OLMo 2 1B,
     whose checkpoints notebook 04 looks at, used this length-normalised loss with
     $\beta = 5$, according to the training command its authors published in their
-    open-instruct repository (the OLMo 2 paper names neither the variant nor $\beta$). That $\beta$
-    multiplies per-token mean log-ratios, so it is not comparable with a $\beta$ on summed
-    log-ratios like this notebook's. Here every response has 5 tokens, so the
+    open-instruct repository (the OLMo 2 paper names neither the variant nor $\beta$).
+    That $\beta$ multiplies per-token mean log-ratios, so it is not comparable with a
+    $\beta$ on summed log-ratios like this notebook's. Here every response has 5 tokens, so the
     length-normalised loss with $\beta$ is exactly the summed one with $\beta/5$.
     """)
     _next = mo.md(r"""
-    DPO did not end the use of RL. In Tülu 3, RL with verifiable rewards (a programmatic
-    check of the answer, optimised with PPO) comes after the preference stage, and OLMo
-    2 1B was post-trained with SFT, then DPO, then GRPO. Notebook 04 puts the three on
-    one world, and adds the comparison this notebook cannot make: a Bradley–Terry reward
-    model fitted to the same pairs, with PPO run on it, next to DPO.
+    DPO did not end the use of RL. Tülu 3 introduced Reinforcement Learning with
+    Verifiable Rewards (RLVR), for "tasks with verifiable outcomes such as mathematical
+    problem-solving and instruction following", and its authors "train models with RLVR
+    following preference finetuning", using PPO. OLMo 2 1B was post-trained with SFT,
+    then DPO, then RLVR with GRPO. Notebook 04 runs PPO, GRPO and DPO on the toy world of
+    notebooks 00 to 03, against the same exact optimum, and adds the comparison this
+    notebook cannot make: a Bradley–Terry reward model fitted to the same pairs DPO uses,
+    with PPO run on it, next to DPO.
     """)
     mo.vstack([_norm, mo.md(cite("lambert2024")), _next, mo.md(cite("lambert2024", "olmo2024"))])
     return
