@@ -23,7 +23,7 @@ from proxopt.world import DEFAULT_WORLD, World
 
 NAMES = ("ppo", "grpo", "grpo_ppo_like", "dpo", "ppo_rm")
 PAIR_COUNTS = (250, 1000, 4000, 16000)
-LR_GRID = (3e-4, 1e-3, 3e-3)
+LR_GRID = (1e-4, 3e-4, 1e-3, 3e-3)
 SEEDS = (0, 1, 2)
 N_PAIRS = 4000  # the pair count of the comparison runs and of tuning
 REWARD_MODE = "graded"
@@ -162,8 +162,8 @@ def compare(
         {"seed": s, "n_pairs": n, **get("ppo_rm", s, n).extras["reward_model"]}
         for n in PAIR_COUNTS for s in seeds
     ]
-    return {"beta": beta, "tau": tau, "lr": lr, "runs": runs, "points": points,
-            "reward_model": reward_model}
+    return {"beta": beta, "tau": tau, "seeds": list(seeds), "lr": lr, "runs": runs,
+            "points": points, "reward_model": reward_model}
 
 
 def method(grid: list[dict], result: dict) -> dict:
@@ -175,6 +175,12 @@ def method(grid: list[dict], result: dict) -> dict:
     grpo_budget = {"iterations": g.iterations, "epochs": g.epochs, "group_size": g.group_size,
                    "groups_per_iteration": "one per prompt", "gradient_steps": g.iterations * g.epochs}
     tuning_seeds = sorted({s for row in grid for s in row.get("seeds", [])})
+    comparison_seeds = list(result["seeds"])
+
+    def edge(rate: float) -> dict:
+        at = "lowest" if rate == min(LR_GRID) else "highest" if rate == max(LR_GRID) else None
+        return {"at_grid_edge": at is not None, "edge": at}
+
     return {
         "selection": (
             "per algorithm, the learning rate in lr_grid with the lowest mean final gap "
@@ -183,6 +189,13 @@ def method(grid: list[dict], result: dict) -> dict:
         ),
         "lr_grid": list(LR_GRID),
         "tuning_seeds": tuning_seeds,
+        "comparison_seeds": comparison_seeds,
+        "same_seeds_for_tuning_and_comparison": tuning_seeds == sorted(comparison_seeds),
+        "seed_note": (
+            "when the seeds are the same, the comparison's reported means are those the "
+            "selection minimised, so they are slightly optimistic"
+        ),
+        "grid_edge": {name: edge(result["lr"][name]) for name in NAMES},
         "target": f"pi*_beta, beta = {result['beta']}",
         "world": "DEFAULT_WORLD",
         "reward_mode": REWARD_MODE,
@@ -211,6 +224,7 @@ def save(path: Path, grid: list[dict], result: dict) -> None:
     out = {
         "beta": result["beta"],
         "tau": result["tau"],
+        "seeds": result["seeds"],
         "lr": result["lr"],
         "method": method(grid, result),
         "grid": grid,

@@ -19,7 +19,21 @@ def test_configs_share_one_target():
 
 
 def test_lr_grid():
-    assert synthesis.LR_GRID == (3e-4, 1e-3, 3e-3)
+    assert synthesis.LR_GRID == (1e-4, 3e-4, 1e-3, 3e-3)
+
+
+def test_method_flags_grid_edges_and_shared_seeds():
+    lr = {"ppo": 1e-3, "grpo": 1e-4, "grpo_ppo_like": 3e-4, "dpo": 3e-3, "ppo_rm": 3e-4}
+    grid = [{"name": n, "lr": r, "seeds": [0, 1, 2], "final_gaps": [0.1] * 3,
+             "mean_final_gap": 0.1} for n in synthesis.NAMES for r in synthesis.LR_GRID]
+    m = synthesis.method(grid, {"beta": 0.1, "tau": 0.25, "lr": lr, "seeds": [0, 1, 2]})
+    edge = m["grid_edge"]
+    assert edge["ppo"] == {"at_grid_edge": False, "edge": None}
+    assert edge["grpo"] == {"at_grid_edge": True, "edge": "lowest"}
+    assert edge["dpo"] == {"at_grid_edge": True, "edge": "highest"}
+    assert edge["grpo_ppo_like"]["at_grid_edge"] is False
+    assert m["comparison_seeds"] == [0, 1, 2] and m["tuning_seeds"] == [0, 1, 2]
+    assert m["same_seeds_for_tuning_and_comparison"] is True
 
 
 def test_load_returns_none_when_missing(tmp_path):
@@ -48,6 +62,7 @@ def test_every_run_targets_beta_and_round_trips(tmp_path):
     result = {
         "beta": 0.1,
         "tau": 0.25,
+        "seeds": [0],
         "lr": {n: 3e-3 for n in synthesis.NAMES},
         "runs": runs,
         "points": {"dpo": [(500, 0.1)], "ppo_rm": [(500, 0.2)]},
@@ -83,7 +98,8 @@ def test_committed_file_is_complete():
     assert sorted((r["n_pairs"], r["seed"]) for r in rows) == [
         (n, s) for n in synthesis.PAIR_COUNTS for s in (0, 1, 2)
     ]
-    assert set(data["method"]) >= {"selection", "budget", "feedback_units"}
+    assert set(data["method"]) >= {"selection", "budget", "feedback_units", "grid_edge",
+                                   "same_seeds_for_tuning_and_comparison"}
 
 
 def test_committed_file_has_no_machine_details():
