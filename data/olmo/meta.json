@@ -1,0 +1,92 @@
+{
+  "date": "2026-11-22",
+  "revisions": {
+    "sft": {
+      "repo": "allenai/OLMo-2-0425-1B-SFT",
+      "revision": "0d85a3d037876ce6ac7d4311d994400fc66ac27f"
+    },
+    "dpo": {
+      "repo": "allenai/OLMo-2-0425-1B-DPO",
+      "revision": "c4b0485961ab24c2433b090f3b922f0913a9290f"
+    },
+    "instruct": {
+      "repo": "allenai/OLMo-2-0425-1B-Instruct",
+      "revision": "48d788eca847d4d7548f375ad03d3c9312f6139e"
+    }
+  },
+  "device": "mps",
+  "dtype": "float16",
+  "torch": "2.15.0",
+  "transformers": "5.24.0",
+  "generation": {
+    "max_new_tokens": 150,
+    "raw_separator": " ",
+    "greedy": true,
+    "samples": {
+      "n": 3,
+      "temperature": 0.7,
+      "seeds": [
+        1,
+        2,
+        3
+      ]
+    },
+    "neither": {
+      "n": 5,
+      "temperature": 1.0,
+      "max_new_tokens": 20,
+      "seeds": [
+        11,
+        12,
+        13,
+        14,
+        15
+      ]
+    }
+  },
+  "margins": {
+    "n_requested": 300,
+    "n": 300,
+    "shuffle_seed": 0,
+    "shuffle_buffer": 10000,
+    "max_tokens": 512,
+    "response_tokens": "assistant text and its end-of-sequence token",
+    "wall_time_s": 938.9,
+    "dataset": "allenai/olmo-2-0425-1b-preference-mix",
+    "dataset_revision": "c6454f3d364622718a8ecd3d307e524febbba569",
+    "scanned": 963,
+    "not_single_turn": 0,
+    "too_long": 659,
+    "prefix_mismatch": 4,
+    "identical_responses": 2,
+    "templates_identical": true
+  },
+  "drift": {
+    "n_requested": 120,
+    "selection_seed": 0,
+    "texts": "English, templated, non-empty responses, all modes",
+    "wall_time_s": 168.8,
+    "steps": {
+      "sft->dpo": {
+        "n": 120,
+        "source": "olmo_dpo__tmpl.jsonl",
+        "wall_time_s": 89.5,
+        "decode_mismatch": 0,
+        "greedy_rows": 30,
+        "greedy_first_token_agree": 29,
+        "greedy_positions": 3406,
+        "greedy_argmax_agree": 3403
+      },
+      "dpo->instruct": {
+        "n": 120,
+        "source": "olmo_instruct__tmpl.jsonl",
+        "wall_time_s": 79.2,
+        "decode_mismatch": 0,
+        "greedy_rows": 30,
+        "greedy_first_token_agree": 30,
+        "greedy_positions": 3393,
+        "greedy_argmax_agree": 3392
+      }
+    }
+  }
+}
