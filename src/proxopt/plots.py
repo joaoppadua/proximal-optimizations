@@ -36,6 +36,7 @@ COLORS: dict[str, str] = {
 # the ppo blue, and each holds >= 3:1 on both a light and a dark surface.
 _CYCLE = ["#2a9d3f", "#b34fb3", "#8f8f1f", "#2a9cb0", "#c07a45"]
 _BAND_ALPHA = 0.4
+_TARGET_MARKERS = ["D", "s", "^", "v", "P", "X"]
 
 _INK = "#8a8a8a"
 _GRID = "#8a8a8a"
@@ -189,9 +190,11 @@ def frontier_plot(
             starts.append((xs[0], ys[0]))
         if starts:  # every run starts from the reference policy: one marker
             ax.plot(*starts[0], "o", mfc="none", color=COLORS["ref"], ms=7, mew=1.6, label="start")
+        markers = itertools.cycle(_TARGET_MARKERS)  # several targets differ by shape, not colour
         for name, (tx, ty) in (targets or {}).items():
             # labelled through the legend, which sits outside the axes and covers nothing
-            ax.plot(tx, ty, "D", color=COLORS["optimum"], ms=7, mec="none", ls="none", label=name)
+            ax.plot(tx, ty, next(markers), color=COLORS["optimum"], ms=7, mec="none", ls="none",
+                    label=name)
         if ceiling is not None:
             ax.axvline(ceiling, color=_INK, ls=":", lw=1.4, label=f"drift ceiling ({ceiling:.2f})")
         ax.set_xlabel(DRIFT)
@@ -265,8 +268,9 @@ def scatter_true_vs_estimate(
             ax.scatter(e, t, s=14, alpha=0.6, color=_CYCLE[1], edgecolors="none")
         else:
             m = mask.detach().flatten().numpy().astype(bool)
+            # the masked group (usually the few covered points) is drawn on top
             ax.scatter(e[m], t[m], s=14, alpha=0.6, color=_CYCLE[1], edgecolors="none",
-                       label=mask_labels[0])
+                       label=mask_labels[0], zorder=3)
             ax.scatter(e[~m], t[~m], s=14, alpha=0.6, color=_CYCLE[0], edgecolors="none",
                        label=mask_labels[1])
             ax.legend(loc="upper left")

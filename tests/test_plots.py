@@ -98,6 +98,13 @@ def test_frontier_plot_with_ceiling_and_targets():
     assert isinstance(frontier_plot(frontier, {"ppo": [fake_run(), fake_run(0.1)]}), Figure)
 
 
+def test_frontier_plot_targets_differ_by_marker():
+    fig = frontier_plot([(0.1, 0.5), (0.5, 0.9)], {}, targets={"a": (0.2, 0.6), "b": (0.4, 0.8)})
+    lines = {ln.get_label(): ln for ln in fig.axes[0].get_lines()}
+    assert lines["a"].get_marker() != lines["b"].get_marker()
+    assert lines["a"].get_color() == lines["b"].get_color()
+
+
 def test_ratio_hist_title_has_percent():
     fig = ratio_hist(torch.rand(500) + 0.5, 0.2)
     assert isinstance(fig, Figure) and "%" in fig.axes[0].get_title()
@@ -118,6 +125,8 @@ def test_scatter_true_vs_estimate():
     assert isinstance(fig, Figure)
     texts = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
     assert "covered" in texts and "not covered" in texts
+    layers = {c.get_label(): c.get_zorder() for c in fig.axes[0].collections}
+    assert layers["covered"] > layers["not covered"]  # the masked points are not hidden
 
 
 def test_feedback_points():
