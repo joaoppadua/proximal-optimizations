@@ -664,10 +664,12 @@ def _(mo):
     scale of the annotators' reward only through their product, and the implicit reward is
     defined only up to a constant per prompt. What does not carry over: here every response can be enumerated, so the gap,
     the coverage and the mass a dataset covers are exact, and the true reward and the true
-    $\tau$ are known. For an LLM none of these can be computed; only the losses can, and
-    the measurements below show that a falling training loss does not mean a falling
-    gap, and that a held-out loss says roughly when to stop but not how far from its
-    target the policy is. Which source of
+    $\tau$ are known. For an LLM none of these can be computed; only the losses can. In
+    this world, the measurements below show that a falling training loss does not mean a
+    falling gap; that the held-out loss turned close to where the gap turned with pairs
+    from $\pi_{\text{ref}}$ (items 4 and 5) but not with uniform pairs (item 4), so here
+    it did not always say when to stop; and that it never says how far from its target
+    the policy is. Which source of
     pairs works better, where the gap turns, and at which learning rate, are facts about
     this world (4 prompts, 32,768 responses, a reference that ignores the prompt, a small
     GRU), not about LLM datasets.
@@ -713,7 +715,8 @@ def _(mo, reveal):
                 "meaningfully below log 2. That is the one setting where DPO aims at notebook "
                 "00's yardstick, and with 4,000 pairs it learns almost nothing there: at τ = 1 "
                 "a reward difference of 0.1 moves the winning probability only from 0.5 to "
-                "0.525, so the labels are close to coin flips and the run fits their noise. "
+                "0.525, so the labels are close to coin flips. A likely reading, not isolated by a "
+                "measurement: the run fits their noise. "
                 "**KL is a strict judge of a concentrated target.** At τ = 0.05, "
                 "KL(π ‖ π*_βτ) ends at 1.99–2.03, larger than KL(π ‖ π*_β) = 1.05–1.12, and "
                 "at τ = 0.1 too (0.85–0.87 against 0.73–0.80); at 0.25 and 0.5 the two are "
@@ -828,8 +831,9 @@ def _(mo, reveal):
                 "replaced by its probability σ((r_w − r_l)/τ) (information no real dataset "
                 "has; see item 5 and `scripts/dpo_label_diagnostic.py`), the same 4,000 pairs "
                 "reach 0.0123–0.0125 from π_ref against 0.032–0.033 uniform at step 300. So "
-                "uniform pairs are worse here at every size and budget measured, because of "
-                "where they fall. They are not useless: a unit test shows that on a 9-response "
+                "uniform pairs are worse here at every size and budget measured. This notebook's "
+                "reading, which the coverage numbers above support but no run isolates, is "
+                "that where they fall decides it. They are not useless: a unit test shows that on a 9-response "
                 "world 50,000 uniform pairs, which cover every response, bring DPO to its "
                 "target. That test does not compare sources.",
             ),
@@ -951,7 +955,7 @@ def _(cite, mo):
     **Length-normalised DPO.** The Tülu 3 recipe divides each log-ratio by the length of
     its response, $\frac{\beta}{|y_w|} \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)}
     - \frac{\beta}{|y_l|} \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)}$
-    (its eq. 6), so that each response enters through its mean per-token log-ratio; its
+    (its eq. 6), with the effect that each response enters through its mean per-token log-ratio; its
     authors report that "length-normalized DPO works best". The DPO stage of OLMo 2 1B,
     whose checkpoints notebook 04 looks at, used this length-normalised loss with
     $\beta = 5$, according to the training command its authors published in their

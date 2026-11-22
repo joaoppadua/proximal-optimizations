@@ -66,6 +66,7 @@ def _(mo):
     | $\tau$ | preference noise (notebook 03) |
     | $G$ | group size (notebook 02) |
     | $\varepsilon$ | clip range (notebooks 01, 02) |
+    | $\sigma$ | two meanings, told apart where each is used: the standard deviation of a group's rewards (notebooks 02, 04), and the logistic function $1/(1 + e^{-z})$ (notebooks 03, 04) |
 
     The notation never changes from here on.
     """)
@@ -85,7 +86,7 @@ def _(DEFAULT_WORLD, cite, mo):
         programmatic check on the whole response. In the default, *graded* mode,
         $r(x, y) = 1 - |\textstyle\sum_t y_t - \text{{target}}(x)| / {_w.max_sum}$, which lies in
         $[0, 1]$ and is 1 only when the digits sum to the target. (The *verifiable* mode, 1 if
-        the sum is exact and 0 otherwise, appears in notebook 02.)
+        the sum is exact and 0 otherwise, first appears in notebook 01.)
 
         **The policy** $\pi_\theta$ is a small GRU that emits one token at a time: at step $t$
         it reads $x$ and $y_{{t-1}}$ and outputs $\pi_\theta(y_t \mid x, y_{{<t}})$. So
@@ -544,7 +545,8 @@ def _(mo, reveal):
                 "B = 32 for 400 steps: the same 12,800 reward calls (or press the button, "
                 "which plots both against units of feedback). Which path is noisier, and which "
                 "ends closer to the optimum?",
-                "Measured over seeds 0–2. B = 64 is evaluated every 640 reward calls and "
+                "Measured over seeds 0–2 (`scripts/measure_nb00.py` computes every number in "
+                "this answer). B = 64 is evaluated every 640 reward calls and "
                 "B = 32 every 320; the comparisons below use the shared grid of every 640 "
                 "calls, with the gap averaged over seeds unless a range is given. "
                 "**A slightly faster start:** B = 32 is ahead at 640, 1,280 and 1,920 calls "

@@ -76,6 +76,44 @@ Read 2026-11-22. Quotes verbatim; a quote cut short is marked "…".
   - §6: "We train models with RLVR following preference finetuning, and we use the PPO (Schulman et al., 2017) algorithm to optimize for the RLVR objective."
   - §6, after Eq. (8): "We set α = 10 based on pilot experiments and did not tune it further." Table 21 (§5.4.1): "The final 8B RLVR model used β=0.05 and ω=0.0". (Notebook 02 states only the PPO fact.)
 
+## Facts recorded from Stiennon et al. 2020 and Ouyang et al. 2022 (for notebooks 01 and 04)
+
+Read in Task 13 and again 2026-11-22, in the text extracted from the arXiv PDFs listed under
+"Sources read" (Stiennon v3, Ouyang v1). Quotes verbatim; a quote cut short is marked "…".
+
+- **Stiennon et al. 2020,** https://arxiv.org/pdf/2009.01325 (v3).
+  - §3.4 "Models", paragraph "Human feedback policies": "For the PPO value function, we use a
+    Transformer with completely separate parameters from the policy. This prevents updates to
+    the value function from partially destroying the pretrained policy early in training (see
+    ablation in Appendix G.1). We initialize the value function to the parameters of the reward
+    model. In our experiments, the reward model, policy, and value function are the same size."
+  - Appendix B.1 "Hyperparameters": "For PPO, we run with separate policy and value networks,
+    initializing our policies to the supervised baseline, and our value functions to the reward
+    model. We set γ = 1 and λ = 0.95 for the advantage estimation [57] and do 4 epochs of
+    optimization for each batch of rollouts."
+  - Appendix G.1 "Value function ablation": "…we conduct an ablation comparing using separate
+    parameters for the value function and policy, against using a shared network … The results,
+    shown in Figure 11, clearly indicate that using separate networks outperforms the latter. On
+    the other hand, having separate networks increases the memory requirements of running RL
+    fine-tuning."
+- **Ouyang et al. 2022,** https://arxiv.org/pdf/2203.02155 (v1).
+  - §3.5, paragraph "Reinforcement learning (RL)": "In addition, we add a per-token KL penalty
+    from the SFT model at each token to mitigate overoptimization of the reward model. The value
+    function is initialized from the RM." (The first sentence is also row 3.)
+  - Appendix C.4 "Details of RLHF training": "The batch size for each iteration is 512, with a
+    minibatch size of 64. In other words, each batch is randomly split into 8 minibatches and is
+    trained on for only a single inner epoch (Schulman et al., 2017)." And: "As previously
+    mentioned, for all PPO models we use a 6B RM and a 6B value function, and the latter is
+    initialized from the former. By using the same 6B reward model and value function on
+    policies of all model sizes, it’s easier to compare the effect of policy model size on
+    policy performance."
+
+What the notebooks state from these, and only that: notebook 01's carry-over note (Stiennon
+B.1: γ = 1, λ = 0.95, 4 epochs; Ouyang C.4: 8 minibatches of 64 from a batch of 512, "a single
+inner epoch"), its item 2 (Ouyang C.4), its "Where it went next" (Stiennon §3.4 and G.1;
+Ouyang §3.5 and C.4); notebook 04's history (Stiennon §3.4: a value function with parameters
+separate from the policy's, initialised from the reward model).
+
 ## Notes (paper-side points not to copy)
 
 - **DPO App. A.4 has a sign slip.** Eq. (21) writes the loss as

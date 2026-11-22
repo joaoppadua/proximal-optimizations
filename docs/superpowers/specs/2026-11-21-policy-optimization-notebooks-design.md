@@ -1,6 +1,6 @@
 # PPO, GRPO and DPO in five marimo notebooks: design
 
-Date: 2026-11-21. Status: reviewed by a builder check; awaiting João's approval.
+Date: 2026-11-21. Status: approved on 2026-11-21 and built; the Errata section at the end records the corrections found during the build.
 
 ## 1. Intent
 

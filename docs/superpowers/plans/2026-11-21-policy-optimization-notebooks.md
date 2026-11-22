@@ -1,5 +1,8 @@
 # PPO, GRPO and DPO Notebooks Implementation Plan
 
+> **Status after the build.** This plan was amended during the build by recorded rulings; where it differs from the code, the code and the notebooks are current (for example the learning-rate grid of the synthesis and the range of notebook 03's pairs control).
+> The spec's Errata section lists the corrections to the mathematics.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Five marimo notebooks that teach PPO, GRPO and DPO on one shared, exactly solvable toy language model, with a reality check on real OLMo checkpoints.

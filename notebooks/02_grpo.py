@@ -137,7 +137,9 @@ def _(cite, mo):
         ratio is exactly 1 at the only step taken, so the clip never binds: GRPO is then a
         policy gradient with group-standardised advantages plus the KL estimator's gradient.
         The objective, advantage, estimator, $\beta = 0.04$ and the single update are from
-        the first reference; the OLMo 2 runs' $\beta$ from the second's training commands:
+        the first reference. The OLMo 2 1B runs' $\beta = 0.01$ is from the training
+        commands that the OLMo 2 authors (second reference) published in their open-instruct
+        repository, as recorded in `docs/olmo-facts.md`:
         """
     )
     mo.vstack([_def, mo.md(cite("shao2024", "olmo2024"))])
@@ -184,7 +186,9 @@ def _(cite, mo):
         the reverse KL at each state, weighted by how often *$\pi_\theta$* reaches that state.
         The gradient of the sequence-level $\mathrm{KL}(\pi_{\text{ref}} \,\|\, \pi_\theta)$
         weights the states by $\pi_{\text{ref}}$ instead. So for responses longer than one
-        token, the term is the gradient of neither sequence-level KL. Measured exactly, by
+        token, the term is the gradient of neither sequence-level KL. Measured exactly
+        (`scripts/measure_nb02.py`, which prints the numbers of (a) to (c) and of the
+        paragraph on what the collapse depends on, except where another source is named), by
         enumerating all 32,768 responses of each prompt, at the final policy of the default
         PPO run (seed 0), the cosine between the term's expected gradient and the gradient of
         $\mathrm{KL}(\pi_{\text{ref}} \,\|\, \pi_\theta)$ is 0.87, and with that of
@@ -200,8 +204,8 @@ def _(cite, mo):
         differences $r_i - \mathrm{mean}(r)$ against a KL weight of $\beta\sigma$. So the
         effective $\beta$ is $\beta\sigma$, different for every prompt and every batch, and it
         falls as the policy improves, because a group of good responses has a small spread.
-        Measured in published GRPO (a copy of `grpo.train` that logs $\sigma$ and reproduces
-        its metrics exactly; seeds 0–2): the median $\sigma$ over groups with a non-zero
+        Measured in published GRPO (a copy of `grpo.train` in `scripts/measure_nb02.py`
+        that logs $\sigma$ and reproduces its metrics exactly; seeds 0–2): the median $\sigma$ over groups with a non-zero
         spread is 0.12–0.14 in iterations 1–10 and 0.020–0.022 in iterations 141–150, so the
         effective $\beta$ goes from about 0.013 to about 0.002 while the nominal one is 0.1.
         At 1 epoch the median $\sigma$ is 0.15 in iterations 1–10 and 0.030–0.032 in
@@ -228,7 +232,8 @@ def _(cite, mo):
           (b) moves with every batch. The expectation this project started from: the gap
           levels off above zero.
 
-        Measured on the default world: $\beta = 0.1$, graded reward, $G = 8$, $\varepsilon = 0.2$,
+        Measured on the default world (`scripts/measure_nb02.py`): $\beta = 0.1$, graded
+        reward, $G = 8$, $\varepsilon = 0.2$,
         150 iterations, seeds 0–2, gap and drift at the last iteration as min–max over the
         seeds. The gap starts at 0.1022; $\pi^*_{0.1}$ has drift 0.642; the drift ceiling
         (notebook 00) is 3.44.
@@ -236,9 +241,9 @@ def _(cite, mo):
         | division | KL | gap, 4 epochs | drift, 4 epochs | gap, 1 epoch | drift, 1 epoch |
         |---|---|---|---|---|---|
         | on | in the loss (**published**) | **0.373–0.437** | **5.12–5.77** | **0.225–0.230** | **3.49–3.53** |
-        | on | in the reward | 0.0198–0.0258 | 0.71–0.76 | 0.0137–0.0140 | 0.57–0.62 |
+        | on | in the reward | 0.0198–0.0258 | 0.71–0.76 | 0.0137–0.0140 | 0.57–0.61 |
         | off | in the loss | 0.0341–0.0392 | 0.49–0.61 | 0.0236–0.0249 | 0.41–0.46 |
-        | off | in the reward (PPO-like) | 0.0175–0.0192 | 0.70–0.75 | 0.0134–0.0139 | 0.55–0.56 |
+        | off | in the reward (PPO-like) | 0.0175–0.0192 | 0.69–0.75 | 0.0134–0.0139 | 0.55–0.56 |
         | PPO (notebook 01, 4 epochs) | | 0.0145–0.0157 | 0.62–0.63 | | |
 
         The two "KL in the reward" rows close the gap, as predicted: with the division on,
@@ -270,6 +275,16 @@ def _(cite, mo):
         iterations, gap 0.086–0.100 against $\pi^*_{0.04}$'s start of 0.160, and rising
         again after its minimum.
 
+        **Does it depend on the learning rate?** Not within the budgets tried: a lower rate
+        delays it. At a ten times lower rate, 1e-4 (4 epochs per batch, 1,500 iterations,
+        6,000 gradient steps, seeds 0–2), published GRPO's gap falls to 0.035–0.039 at
+        iterations 64–73, is back above its start at iterations 159–174, and the drift
+        crosses the ceiling at iterations 319–354; it ends at a gap of 0.39–0.43 and drift
+        5.33–5.71, near the 1e-3 results. At iteration 150, where the default budget ends, its
+        gap is still 0.082–0.096, below its start: one budget at a lower rate can look like
+        convergence. One lower rate and one budget, three seeds: this does not show what
+        happens at every rate.
+
         **The KL term is there, with the right sign.** Sweeping $\beta$ on published GRPO
         (4 epochs, seeds 0–2), the final drift falls as $\beta$ rises: 6.9–7.8 at
         $\beta = 0.01$, 6.7–7.4 at 0.04, 5.1–5.8 at 0.1, 2.2–2.3 at 0.3, 0.42–0.52 at 1. But
@@ -289,8 +304,8 @@ def _(cite, mo):
         maximum-reward response over another, so the policy can keep sharpening onto a few
         of them at no cost in reward. What supports this: each switch alone removes the
         collapse; the effective $\beta$ falls as in (b); a larger $\beta$ restrains it. What
-        it is not: it is not batch reuse (1 epoch collapses too) and not small groups (up to
-        $G = 32$ collapses too). None of these measurements isolates the sharpening step
+        it is not: it is not batch reuse (1 epoch collapses too), not small groups (up to
+        $G = 32$ collapses too), and a ten times lower learning rate only delays it. None of these measurements isolates the sharpening step
         itself.
         """
     )
@@ -587,8 +602,11 @@ def _(
             mo.md(
                 r"""
                 **Against gradient steps**, with both KL directions: $\mathrm{KL}(\pi \,\|\, \pi_{\text{ref}})$
-                is the drift $J_\beta$ penalises, $\mathrm{KL}(\pi_{\text{ref}} \,\|\, \pi)$ the
-                direction the estimator's gradient leans towards (a).
+                is the drift $J_\beta$ penalises; $\mathrm{KL}(\pi_{\text{ref}} \,\|\, \pi)$ is
+                the sequence-level reverse KL. By (a), the estimator's gradient descends the
+                reverse KL at each next-token distribution; summed over a response, that is
+                the gradient of neither sequence-level KL, so this curve is shown for
+                comparison, not as what the term minimises.
                 """
             ),
             plots.training_curves(_runs, keys=("reward", "kl", "kl_rev", "gap")),
@@ -697,7 +715,8 @@ def _(cite, mo):
     DeepSeek-R1-Zero $\beta = 0.001$ and 16 samples per question, with its reference
     model replaced by the latest policy every 400 steps (so its KL term holds the policy
     near a recent copy of itself, not near the starting model as here), the OLMo 2 1B runs
-    $\beta = 0.01$ and 16. What does not carry over: here the response space is enumerable, so
+    $\beta = 0.01$ (from their published training commands) in a training script whose
+    default is 16 samples per prompt. What does not carry over: here the response space is enumerable, so
     the drift, the gap and the drift ceiling are exact, and the collapse onto a few
     maximum-reward responses can be seen; for an LLM none of these can be computed. The
     collapse itself is a measured fact about this world: a reward with a large set of tied
@@ -737,8 +756,8 @@ def _(mo, reveal):
                 "Measured, 150 iterations, gap at the last iteration (start 0.1022; PPO "
                 "0.0145–0.0157). **4 epochs:** published 0.373–0.437 (drift 5.12–5.77); "
                 "division on, KL in the reward 0.0198–0.0258 (0.71–0.76); division off, KL in "
-                "the loss 0.0341–0.0392 (0.49–0.61); both PPO-like 0.0175–0.0192 (0.70–0.75). "
-                "**1 epoch:** 0.225–0.230 (3.49–3.53); 0.0137–0.0140 (0.57–0.62); "
+                "the loss 0.0341–0.0392 (0.49–0.61); both PPO-like 0.0175–0.0192 (0.69–0.75). "
+                "**1 epoch:** 0.225–0.230 (3.49–3.53); 0.0137–0.0140 (0.57–0.61); "
                 "0.0236–0.0249 (0.41–0.46); 0.0134–0.0139 (0.55–0.56). The theory's ranking "
                 "holds in both: KL in the reward closes the gap with or without the division "
                 "(though with it on, seed 2 at 4 epochs ends at 25% of the start, not below "
@@ -878,8 +897,9 @@ def _(cite, mo):
     ## Where it went next
 
     DeepSeek-R1-Zero applied GRPO (standardised advantage, the same KL estimator in the
-    loss) directly to a base model, with no supervised fine-tuning first and a rule-based
-    reward (accuracy and format) instead of a neural reward model, citing reward hacking.
+    loss) directly to a base model, with no supervised fine-tuning first and with a
+    rule-based reward for accuracy and format; its authors write that
+    "neural reward models are susceptible to reward hacking during large-scale RL".
     Two settings differ from this notebook's: each rollout was split into 16 minibatches
     for "a single inner epoch", so the policy takes several steps per batch, and "every 400
     steps, we replace the reference model with the latest policy model", so $\pi_{\text{ref}}$
@@ -887,9 +907,12 @@ def _(cite, mo):
     """)
     _tulu = mo.md(r"""
     Tülu 3 introduced Reinforcement Learning with Verifiable Rewards (RLVR), training on a
-    programmatic check of the answer, and optimised it with PPO, not GRPO. The OLMo 2 1B
-    model's RLVR stage used GRPO ($\beta = 0.01$, the same estimator in the loss); notebook
-    04 looks at its checkpoints.
+    programmatic check of the answer, and optimised it with PPO, not GRPO. The OLMo 2 paper
+    performed RLVR on its 1B model with GRPO. The training commands its authors published
+    for the two 1B RL stages set $\beta = 0.01$ in both; the second stage's command also
+    names the `kl3` estimator, which in the GRPO script those runs used is this notebook's
+    estimator, added to the loss (`docs/olmo-facts.md`). Notebook 04 looks at the
+    checkpoints.
     """)
     mo.vstack(
         [

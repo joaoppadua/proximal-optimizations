@@ -126,7 +126,9 @@ def _(labels, mo, sampling, synthesis, syn):
     Notebooks 01 to 03 each built one algorithm on the toy world of notebook 00 and
     measured it against the exact optimum $\pi^*_\beta$. Each was compared with its
     predecessor at that notebook's own defaults. This notebook puts them side by side:
-    PPO, GRPO as published, GRPO with both switches PPO-like, DPO, and PPO on a reward model
+    PPO, GRPO as published (the paper's algorithm, but here with $\beta = 0.1$ and 4 epochs
+    per batch, not the paper's 0.04 and single update; notebook 02 explains both and
+    measures the paper's settings too), GRPO with both switches PPO-like, DPO, and PPO on a reward model
     fitted to the same pairs DPO uses, all on one world, aimed at (or measured against) one
     target{_plan}. Then it
     looks back at the history, and ends with a reality check on three real checkpoints of
@@ -158,7 +160,9 @@ def _(mo):
       next-token distribution, is that of $\mathrm{KL}(\pi_{\text{ref}}(\cdot \mid s_t) \,\|\, \pi_\theta(\cdot \mid s_t))$,
       the other direction; summed over a response it is the gradient of neither
       sequence-level KL. And dividing the advantage by the group's standard deviation
-      $\sigma$ makes the effective KL weight $\beta\sigma$, different for every group.
+      $\sigma$ (here, as in notebook 02, $\sigma$ is that standard deviation; in the
+      reward model's loss under "The code", as in notebook 03, it is the logistic
+      function) makes the effective KL weight $\beta\sigma$, different for every group.
       Its gap is measured against $\pi^*_\beta$, but $\pi^*_\beta$ is not its target.
     - **GRPO, PPO-like** (no division, KL in the reward): every advantage is zero at
       $\pi^*_\beta$, so $\pi^*_\beta$ is a fixed point (notebook 02, (c)).
@@ -241,7 +245,9 @@ def _(cite, mo, prefs, source_md, synthesis, syn):
                 the pairs by the Bradley–Terry likelihood (the DPO paper's eq. 1, citing
                 Bradley and Terry),
                 $L_{{\text{{RM}}}} = -\,\mathbb{{E}}_{{(x, y_w, y_l)}}\big[\log \sigma\big(\hat r(x, y_w) - \hat r(x, y_l)\big)\big]$,
-                with Adam on minibatches ({_fit}):
+                where $\sigma(z) = 1/(1 + e^{{-z}})$ is the logistic function of notebook 03,
+                not the group standard deviation of the Definition, with Adam on minibatches
+                ({_fit}):
                 """
             ),
             mo.md(source_md(prefs.fit_reward_model)),
@@ -388,8 +394,10 @@ def _(comparison, mo, rate):
                 {", ".join(_below) or "no rate"} and above at {", ".join(_above) or "no rate"}.
                 So its result here is a result at one rate and one budget, not a property
                 of the algorithm. Notebook 02 measures it at that notebook's default rate,
-                with each switch on its own, and with the paper's $\beta = 0.04$ and single
-                update per batch ("Does the collapse depend on reusing the batch?").
+                with each switch on its own, with the paper's $\beta = 0.04$ and single
+                update per batch ("Does the collapse depend on reusing the batch?"), and at
+                a ten times lower rate, 1e-4, run for 1,500 iterations ("Does it depend on
+                the learning rate?"): there the same fall and rise come later.
                 """
             ),
         ]
@@ -723,9 +731,12 @@ def _(
 
 
 @app.cell
-def _(DEFAULT_WORLD, comparison, mo):
+def _(DEFAULT_WORLD, live_button, mo, syn):
+    # shown whenever comparison figures are drawn: the committed ones, or the live run's
+    mo.stop(syn is None and not live_button.value)
     _w = DEFAULT_WORLD
-    _n_seeds = len(comparison["seeds"])
+    _setup = (f"this grid and {len(syn['seeds'])} seeds" if syn is not None
+              else "each module's default rate and one seed")
     mo.md(rf"""
     **What carries over to real LLMs, and what does not.** What carries over is the logic of
     the comparison. Algorithms that aim at different points cannot be compared by one
@@ -737,7 +748,7 @@ def _(DEFAULT_WORLD, comparison, mo):
     exact, and the true $\tau$ is known, so $\beta/\tau$ can be set; for an LLM none of
     these is available. Which method ends with the lower gap, by how much, and at which
     rate, are facts about this world ({_w.n_prompts} prompts, {_w.n_responses:,} responses
-    per prompt, a small GRU, these budgets, this grid and {_n_seeds} seeds), not about LLMs,
+    per prompt, a small GRU, these budgets, {_setup}), not about LLMs,
     and the plots above do not rank the algorithms in general.
     """)
     return
@@ -755,10 +766,10 @@ def _(mo):
 
 @app.cell
 def _(mo, syn):
-    mo.stop(syn is None, mo.md("*The answers are computed from the precomputed runs, which are not loaded: run `make synthesis`.*"))
+    mo.stop(syn is None, mo.md("*Items 1 to 3 are computed from the precomputed runs, which are not loaded: run `make synthesis`.*"))
     _seeds = ", ".join(str(x) for x in syn["seeds"])
-    mo.md(f"The answers are computed from the committed comparison (seeds {_seeds}), so they "
-          "agree with the tables above.")
+    mo.md(f"Answers 1 to 3 are computed from the committed comparison (seeds {_seeds}), so "
+          "they agree with the tables above.")
     return
 
 
@@ -789,11 +800,14 @@ def _(comparison, np, rate, reveal):
         f"difference between the two is {_low['grpo'] - _low['grpo_ppo_like']:.4f} at the "
         f"lower rate and {_used['grpo'] - _used['grpo_ppo_like']:.4f} at the shared one. "
         f"Its lowest final gap on the grid is at {rate(_best['lr'])}, {_where}. "
-        "A likely reading, not checked here (the file keeps only the final gaps at the other "
-        "rates): a smaller rate moves it less far in the same budget, and at the shared rate "
-        "its gap falls before it rises, so a slow run may still be near the bottom of that "
-        "dip when the budget ends. Either way, the rule's choice says little about the "
-        "algorithm.",
+        "The file keeps only the final gaps at the other rates; what happens later at a "
+        "lower rate was measured in notebook 02 (\"Does it depend on the learning "
+        "rate?\"): published GRPO at 1e-4, 4 epochs per batch, run for 1,500 iterations "
+        "instead of 150, seeds 0–2, has its lowest gap at iterations 64–73, is back above "
+        "its start by iterations 159–174, and ends at 3.8 to 4.2 times its start (at "
+        "notebook 02's default rate, 1e-3, after 150 iterations: 3.6 to 4.3). So at 1e-4 "
+        "the 150-iteration budget ends after the gap's lowest point and before it is back "
+        "above its start, and the rule's choice says little about the algorithm.",
     )
     return pair_counts, pair_diff, rm_corr
 
@@ -815,6 +829,63 @@ def _(pair_counts, pair_diff, reveal, rm_corr):
         + (", and it has not closed at the largest count" if pair_diff[pair_counts[-1]] > 0
            else ", and it has closed by the largest count")
         + ". This is at fixed budgets, and at rates tuned at one pair count.",
+    )
+    return
+
+
+@app.cell
+def _(comparison, np, pair_counts, reveal):
+    _seeds = list(comparison["seeds"])
+    _rows = []  # (pair count, reward model's corr. over all responses, PPO-on-RM final gap)
+    for _n in pair_counts:
+        _gaps = [g for c, g in comparison["points"]["ppo_rm"] if int(c) == _n]  # seed order
+        _rm = sorted((r for r in comparison["reward_model"] if r["n_pairs"] == _n),
+                     key=lambda r: _seeds.index(r["seed"]))
+        _rows += [(_n, r["corr_all"], g) for r, g in zip(_rm, _gaps)]
+    _corr = np.corrcoef([r[1] for r in _rows], [r[2] for r in _rows])[0, 1]
+    _match = [n for n in pair_counts
+              if max((r for r in _rows if r[0] == n), key=lambda r: r[1])
+              == min((r for r in _rows if r[0] == n), key=lambda r: r[2])]
+    reveal(
+        "**3. Does a better reward model give PPO a lower gap?** Across seeds and pair "
+        "counts, predict: are the runs whose reward model correlates best with r/τ (over all "
+        "responses) the runs where PPO on it ends closest to π*_β?",
+        f"From the committed rows ({len(_rows)}: {len(_seeds)} seeds at each of "
+        f"{len(pair_counts)} pair counts). The Pearson correlation between the reward "
+        f"model's correlation with r/τ and PPO's final gap is {_corr:.2f}"
+        + (" (a better model goes with a lower gap)" if _corr < 0 else
+           " (a better model does not go with a lower gap)")
+        + ". Both change with the pair count, so this mixes the effect of more pairs with "
+        "that of a better fit. Within one pair count, the seed with the best-correlated "
+        "reward model is also the seed with the lowest PPO gap at "
+        + (", ".join(f"{n:,}" for n in _match) + " pairs" if _match else "no pair count")
+        + f" ({len(_match)} of {len(pair_counts)}). The correlation weighs every response "
+        "alike, while the gap weighs responses by probability, so the two need not agree.",
+    )
+    return
+
+
+@app.cell
+def _(margins, np, olmo, reveal):
+    _dpo = np.array(olmo.implicit_margins(margins, "dpo", per_token=True))
+    _ins = np.array(olmo.implicit_margins(margins, "instruct", per_token=True))
+    _keep = ~((_dpo == 0) & (_ins == 0))
+    _dpo, _ins = _dpo[_keep], _ins[_keep]
+    _q1, _q3 = np.quantile(np.abs(_dpo), [0.25, 0.75])
+    _same = np.sign(_dpo) == np.sign(_ins)
+    _big, _small = np.abs(_dpo) >= _q3, np.abs(_dpo) <= _q1
+    reveal(
+        "**4. Where Instruct keeps DPO's margin.** On the OLMo preference pairs, sort the "
+        "pairs by the size of the DPO checkpoint's per-token margin against SFT. Predict: "
+        "after the two RL stages, does the Instruct checkpoint keep the margin's sign more "
+        "often on the pairs DPO separated most, or about as often as on the others?",
+        f"From `data/olmo/margins.jsonl` ({int(_keep.sum())} pairs, leaving out those whose "
+        "margin is exactly zero under both checkpoints). Instruct's per-token margin has "
+        f"the sign of DPO's on {_same[_big].mean():.0%} of the quarter of pairs with the "
+        f"largest |DPO margin| (at least {_q3:.3f}), on {_same[_small].mean():.0%} of the "
+        f"quarter with the smallest (at most {_q1:.3f}), and on {_same.mean():.0%} of all. "
+        "These are the DPO stage's own training pairs, so this is about what the RL "
+        "stages kept of what DPO fitted, not about generalisation.",
     )
     return
 
@@ -869,12 +940,9 @@ def _(cite, mo):
     **2024: RL with verifiable rewards.** Tülu 3 introduced RLVR "for training language
     models on tasks with verifiable outcomes such as mathematical problem-solving and
     instruction following", trained "following preference finetuning", with PPO; its
-    authors also report that "length-normalized DPO works best". The OLMo 2 paper performed
-    RLVR on its 1B and 32B models "with Group Relative Policy Optimization (GRPO) …, which
-    forgoes the need for a reward model" (its 7B and 13B models used PPO, with the value
-    function initialised from the reward models).
+    authors also report that "length-normalized DPO works best".
     """),
-            mo.md(cite("lambert2024", "olmo2024")),
+            mo.md(cite("lambert2024")),
             mo.md(r"""
     **2025.** DeepSeek-R1-Zero applied GRPO directly to a base model, with no supervised
     fine-tuning first, and with a rule-based reward for accuracy and format; its authors
@@ -882,6 +950,15 @@ def _(cite, mo):
     RL".
     """),
             mo.md(cite("guo2025")),
+            mo.md(r"""
+    **2025: OLMo 2 1B.** The OLMo 2 1B checkpoints are dated April 2025 (`OLMo-2-0425-1B`).
+    The OLMo 2 paper's reference year, 2024, is that of its first submission; the version
+    read for this set (arXiv v3) covers the 1B model and reports RLVR on its 1B and 32B
+    models "with Group Relative Policy Optimization (GRPO) …, which forgoes the need for a
+    reward model" (its 7B and 13B models used PPO, with the value function initialised from
+    the reward models).
+    """),
+            mo.md(cite("olmo2024")),
             mo.md(r"""
     **Why RL came back after DPO.** What the sources recorded here say: Tülu 3 and OLMo 2
     did not replace DPO with RL; they added an RL stage after it: RLVR, which Tülu 3
