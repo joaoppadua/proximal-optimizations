@@ -9,10 +9,8 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-    import matplotlib as mpl
     import numpy as np
     import torch
-    from matplotlib.figure import Figure
 
     from proxopt import exact, plots
     from proxopt.algos import ppo, reinforce
@@ -26,7 +24,6 @@ def _():
 
     return (
         DEFAULT_WORLD,
-        Figure,
         PPOConfig,
         ReinforceConfig,
         cite,
@@ -34,7 +31,6 @@ def _():
         gae,
         load_reference,
         mo,
-        mpl,
         np,
         plots,
         ppo,
@@ -101,8 +97,10 @@ def _(cite, mo):
         whose expectation under $y \sim \pi_{\text{old}}(\cdot \mid x)$ is
         $\mathbb{E}[r] - \beta\,\mathrm{KL}(\pi_{\text{old}} \,\|\, \pi_{\text{ref}})$, the
         per-prompt $J_\beta$. So the return this PPO maximises is notebook 00's objective,
-        and **this PPO aims at $\pi^*_\beta$**: the gap is the right yardstick for it. This
-        per-token form of the penalty is the one used in RLHF:
+        and **this PPO aims at $\pi^*_\beta$**: the gap is the right yardstick for it. The
+        KL-penalised reward of a whole response, $r - \beta \log(\pi / \pi_{\text{ref}})$, is
+        Ziegler et al.'s; paying the penalty token by token ("a per-token KL penalty from the
+        SFT model at each token") is Ouyang et al.'s:
         """
     )
     _critic = mo.md(
@@ -173,9 +171,9 @@ def _(cite, mo):
         responses, a reward model is fitted to those comparisons, and PPO then maximises
         $J_\beta$ with the reward model in the place of $r$; the KL penalty keeps the policy
         where the reward model was trained, close to the SFT model. Here the first stage is
-        skipped: $r$ is the world's exact programmatic reward. Notebook 03 fits a reward
-        model to preference pairs, and notebook 04 runs PPO on it, next to DPO, which skips
-        the reward model.
+        skipped: $r$ is the world's exact programmatic reward. Notebook 03 is DPO, which
+        learns from preference pairs without a reward model; notebook 04 fits a
+        Bradley–Terry reward model to the same kind of pairs and runs PPO on it, next to DPO.
         """
     )
     mo.vstack(
@@ -213,7 +211,8 @@ def _(cite, mo):
 
         Two things this is not. It is not a constraint: a clipped token gets no gradient of
         its own, but the parameters it shares with other tokens keep moving it, so ratios
-        do leave the band (the histogram in the simulation shows by how much). And it is
+        do leave the band (the histogram in the simulation shows by how much at the run's
+        last gradient step; item 1 of "Things to try" gives the extremes over a run). And it is
         not the KL penalty: the clip keeps $\pi_\theta$ near $\pi_{\text{old}}$ *within one
         batch*, while $\beta$ keeps the policy near $\pi_{\text{ref}}$ over the whole run.
         The clip stands in for TRPO's explicit constraint on
@@ -225,20 +224,12 @@ def _(cite, mo):
 
 
 @app.cell
-def _(Figure, eps_view, mo, mpl, np, plots):
+def _(eps_view, mo, np, plots):
     _eps = eps_view.value
     _rho = np.linspace(0.0, 2.5, 501)
-    _ink = "#8a8a8a"
-    _rc = {
-        "text.color": _ink, "axes.labelcolor": _ink, "axes.edgecolor": _ink,
-        "axes.titlecolor": _ink, "xtick.color": _ink, "ytick.color": _ink,
-        "axes.facecolor": "none", "figure.facecolor": "none", "axes.grid": True,
-        "grid.color": _ink, "grid.alpha": 0.25, "axes.spines.top": False,
-        "axes.spines.right": False, "axes.titlesize": 11, "legend.frameon": False,
-    }
-    with mpl.rc_context(_rc):
-        clip_fig = Figure(figsize=(8.4, 3.2), layout="constrained")
-        for _ax, _adv in zip(clip_fig.subplots(1, 2), (1.0, -1.0)):
+    _ink = plots.COLORS["ref"]
+    with plots.styled_figure(2, width=4.2, height=3.2) as (clip_fig, _axes):
+        for _ax, _adv in zip(_axes, (1.0, -1.0)):
             _clipped = np.minimum(_rho * _adv, np.clip(_rho, 1 - _eps, 1 + _eps) * _adv)
             _ax.plot(_rho, _rho * _adv, color=_ink, ls=":", lw=1.4, label="unclipped ρ·Â")
             _ax.plot(_rho, _clipped, color=plots.COLORS["ppo"], lw=2.2, label="L^CLIP")
@@ -285,8 +276,9 @@ def _(gae, mo, ppo_loss, source_md, token_rewards):
                 moves. That is a trivial fixed point, not a sign of the penalty pulling the
                 policy back. The penalty at work shows with the true reward: after 20
                 iterations (seeds 0–2, everything else default) the drift is 0.074–0.078 at
-                $\beta = 1$ and 0.71–0.79 at $\beta = 0.05$. (The optima's drifts are 0.014 and
-                1.24; neither run has got there in 20 iterations.)
+                $\beta = 1$ and 0.71–0.79 at $\beta = 0.05$. Against their optima's drifts
+                (0.014 and 1.24), the $\beta = 1$ run has overshot, by about five times, and the
+                $\beta = 0.05$ run has not yet got there.
 
                 **GAE**, $\delta_t = r_t + V(s_{t+1}) - V(s_t)$,
                 $\hat A_t = \sum_{l=0}^{T-t} \lambda^l \delta_{t+l}$, $V(s_{T+1}) = 0$, and the
@@ -308,8 +300,10 @@ def _(gae, mo, ppo_loss, source_md, token_rewards):
                 r"""
                 At the first epoch on a batch $\pi_\theta = \pi_{\text{old}}$, so every
                 $\rho_t = 1$, the clip cannot bind, and the policy gradient is the plain
-                policy gradient with per-token advantages $\hat A_t$ (a unit test checks that
-                with the same advantage on every token it equals REINFORCE's, for any $\varepsilon$).
+                policy gradient with per-token advantages $\hat A_t$. A unit test checks that,
+                with the same advantage on every token, it equals REINFORCE's gradient divided
+                by $T$, for any $\varepsilon$; the factor $1/T$ is there because the loss averages
+                over all $B \cdot T$ tokens, not over the $B$ responses.
                 The clip only matters from the second epoch on.
                 """
             ),
@@ -480,9 +474,11 @@ def _(
             ),
             mo.md(
                 r"""
-                **What the clip cut.** The ratios $\rho_t$ of every token of the last batch,
-                at its last gradient step (the end of the last epoch), against the clip
-                range. With one epoch they are all exactly 1.
+                **What the clip cut, at one moment.** The ratios $\rho_t$ of every token of
+                the last batch at the run's last gradient step (the last epoch of the last
+                iteration), against the clip range. It is a snapshot, not the whole run: at
+                other steps of the run, ratios go further from 1 (item 1 below gives the
+                extremes over a run). With one epoch they are all exactly 1.
                 """
             ),
             plots.ratio_hist(ppo_run.extras["ratios"], ppo_cfg.clip),
@@ -505,14 +501,18 @@ def _(
 
 
 @app.cell
-def _(mo):
-    mo.md(r"""
+def _(cite, mo):
+    _note = mo.md(r"""
     **What carries over to real LLMs, and what does not.** The *shape* carries over: the
     reward is a per-token KL penalty plus one task reward on the last token, advantages
     come from GAE over the tokens of a response, the ratio and its clip are per token,
-    and the critic is a value head trained on the same batch. So do the defaults, which
-    are the values Stiennon et al. report ($\gamma = 1$, $\lambda = 0.95$, 4 epochs per
-    batch; their Appendix B.1). What does not: the response space here is enumerable, so
+    and the critic is a value head trained on the same batch. The defaults are the values
+    Stiennon et al. report ($\gamma = 1$, $\lambda = 0.95$, 4 epochs per batch; their
+    Appendix B.1). They are not universal: InstructGPT split each batch of 512 into 8
+    minibatches of 64 and trained on it "for only a single inner epoch" (Ouyang et al.,
+    Appendix C.4). Its policy still takes 8 steps per batch, and from the second
+    minibatch on its ratios can leave 1 and the clip can bind; here each epoch is one step
+    on the whole batch. What does not carry over: the response space here is enumerable, so
     expected reward, drift and gap are exact, while for an LLM they can only be estimated
     from samples and the optimum is unknown. Here sampling a batch costs little; for an LLM, generating the batch is the expensive part, which is the case for reusing
     it, and that case does not show up in these numbers (at the defaults, REINFORCE has a
@@ -521,6 +521,7 @@ def _(mo):
     much clipping cuts, how much λ matters, how seeds spread) is a fact about this toy world
     and these learning rates, not about LLMs.
     """)
+    mo.vstack([_note, mo.md(cite("stiennon2020", "ouyang2022"))])
     return
 
 
@@ -544,25 +545,30 @@ def _(mo, reveal):
         [
             reveal(
                 "**1. Reuse without a brake.** Set epochs to 8 and compare ε = 0.2 with "
-                "ε = 1 (with ε = 1 the band is [0, 2], which the ratios never reach, so "
-                "nothing is clipped). Over seeds 0–2 (or press the button): how far do the "
-                "ratios move, and what happens to the gap?",
-                "Measured, epochs 8, 150 iterations. **The gap:** ε = 1 ends worse, "
-                "0.0209–0.0268 against 0.0183–0.0199 for ε = 0.2, and its curve is rougher: "
-                "after iteration 20 its largest rise from one iteration to the next is "
-                "0.005–0.012, against 0.003–0.004 for ε = 0.2 (and 0.001 for the default, "
-                "4 epochs). Both are worse than 4 epochs (0.0145–0.0157), so most of the "
-                "damage comes from reusing the batch 8 times, and clipping limits it. "
-                "**The ratios** (all tokens of the last batch at its last step) differ less "
-                "between the two than expected: at iteration 10, 2.5–9.1% lie outside [0.8, 1.2] with "
-                "ε = 0.2 and 4.7–5.6% with ε = 1, maximum 1.39–1.43 against 1.33–1.75; at "
-                "the end, 3.8–10.3% against 4.4–13.1%, maximum 1.37–1.49 against 1.49–1.76. "
-                "So clipping does not keep the ratios inside the band (with ε = 0.2 up to a "
-                "tenth of the tokens are outside it), and without it they go only somewhat "
-                "further. The expected picture, ratios far from 1 and an erratic gap, holds "
-                "in direction but is mild here: the run gets rougher and ends worse, it does "
-                "not break. At the default 4 epochs the ratios stay within 0.83–1.29 (at "
-                "iteration 10 and at the end, all three seeds).",
+                "ε = 1. With ε = 1 the band is [0, 2]: the clip still acts, but only on "
+                "ratios above 2 (a ratio cannot fall below 0). Over seeds 0–2 (or press the "
+                "button): how far do the ratios move, and what happens to the gap?",
+                "Measured, epochs 8, 150 iterations. **The ratios over the whole run** (every "
+                "token at every one of the 1,200 gradient steps, read in a copy of the "
+                "training loop that logs them; its last step matches `extras[\"ratios\"]` "
+                "exactly): with ε = 1 they reach 2.52–3.20 at the top and 0.29–0.40 at the "
+                "bottom; with ε = 0.2, 1.98–2.78 and 0.44–0.54. So ε = 1 lets them go "
+                "further, and its clip does act, but rarely: 0.01–0.02% of token-steps are "
+                "above 2. With ε = 0.2, 1.9–2.1% of token-steps are outside [0.8, 1.2], and "
+                "some tokens still reach twice their probability under π_old: the clip "
+                "brakes the ratios, it does not bound them. (At the default 4 epochs: "
+                "0.67–0.74 to 1.53–1.58, 0.08% outside the band.) **The snapshot** in the "
+                "histogram, the last batch at its last step, shows much less: maximum "
+                "1.37–1.49 (ε = 0.2) against 1.49–1.76 (ε = 1), with 3.8–10.3% against "
+                "4.4–13.1% of tokens outside [0.8, 1.2]. Read alone, it would suggest the clip "
+                "makes little difference. **The gap:** ε = 1 ends worse, 0.0209–0.0268 "
+                "against 0.0183–0.0199 for ε = 0.2, and its curve is rougher: after "
+                "iteration 20 its largest rise from one iteration to the next is 0.005–0.012, "
+                "against 0.003–0.004 for ε = 0.2 (and 0.001 at 4 epochs). Both end worse "
+                "than 4 epochs (0.0145–0.0157), so reusing the batch 8 times costs something "
+                "even with the clip, and the clip reduces that cost. The expected picture "
+                "holds: without an effective clip the ratios move further from 1 and the gap "
+                "is rougher and ends worse. It is a degradation, not a breakdown.",
             ),
             seeds_clip,
         ]
@@ -604,7 +610,11 @@ def _(mo, reveal):
                 "learning rate set to 3e-3 in code, one-epoch PPO ends at 0.0151–0.0173, "
                 "nearer REINFORCE but still behind it. The rest was not separately measured; "
                 "candidates are a critic that starts at zero and must be learned, and a value "
-                "loss that shares the policy's network.",
+                "loss that shares the policy's network. Note that this one-epoch setting is "
+                "not InstructGPT's \"single inner epoch\": there each batch was split into 8 "
+                "minibatches (Ouyang et al., Appendix C.4), so the policy moved between them "
+                "and the clip could bind; here one epoch is one full-batch step and every "
+                "ratio is 1.",
             ),
             seeds_epochs,
         ]
@@ -642,8 +652,12 @@ def _(mo, reveal):
                 "0.102 to a peak of 0.170–0.183 at iterations 9–11, because drift grows "
                 "(0.56–0.74 at iteration 10) while expected reward does not (0.727–0.753, "
                 "from 0.745). Only then does it fall: 0.106–0.128 at iteration 20, "
-                "0.053–0.059 at 50, ending at 0.030–0.034. **λ = 1** falls from the start: "
-                "0.066–0.086 at iteration 10, 0.041–0.049 at 20, ending at 0.0141–0.0156, "
+                "0.053–0.059 at 50, ending at 0.030–0.034. **λ = 1** never rises more than "
+                "0.0004 above its start of 0.1022, but its first iterations differ by seed: "
+                "seed 2 falls from the first iteration, seed 0 dips to 0.088 at iteration 2 "
+                "and is back at 0.101 by iteration 6, and seed 1 stays at 0.100–0.103 until "
+                "iteration 7. All three are falling by iteration 8: 0.066–0.086 at iteration 10, "
+                "0.041–0.049 at 20, ending at 0.0141–0.0156, "
                 "no different from the default λ = 0.95 (0.0145–0.0157). A likely reading of "
                 "the rise (not separately measured): an always-positive advantage on the last "
                 "token pushes up whichever last token was sampled, which piles mass on a few "
@@ -695,8 +709,8 @@ def _(reveal):
 
 
 @app.cell
-def _(mo):
-    mo.md(r"""
+def _(cite, mo):
+    _next = mo.md(r"""
     ## Where it went next
 
     PPO on a learned reward model, with the per-token KL penalty, is the RL stage of
@@ -711,6 +725,7 @@ def _(mo):
     critic). GRPO (notebook 02) removes the critic and takes the baseline from a group of
     samples for the same prompt.
     """)
+    mo.vstack([_next, mo.md(cite("ouyang2022", "stiennon2020"))])
     return
 
 

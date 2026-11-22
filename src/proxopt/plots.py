@@ -87,6 +87,22 @@ def _figure(ncols: int = 1, width: float = 4.6, height: float = 3.6) -> tuple[Fi
     return fig, list(axes)
 
 
+@contextmanager
+def styled_figure(
+    ncols: int = 1, width: float = 4.6, height: float = 3.6
+) -> Iterator[tuple[Figure, list]]:
+    """A figure with one row of `ncols` axes, each `width` × `height` inches, in this
+    module's style. Draw inside the `with` block, which is where the style applies:
+
+        with plots.styled_figure(2) as (fig, axes):
+            axes[0].plot(...)
+
+    Notebooks use it for one-off figures that no function here provides, so that they
+    look like the shared ones."""
+    with _style():
+        yield _figure(ncols, width, height)
+
+
 def _colors(labels: Sequence[str]) -> dict[str, str]:
     """COLORS for known keys; free-form ones take the default cycle in order."""
     free = itertools.cycle(_CYCLE)

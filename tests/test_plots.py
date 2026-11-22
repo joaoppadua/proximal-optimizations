@@ -270,3 +270,15 @@ def shifted(run: Run) -> Run:
     run.steps = [s + 1 for s in run.steps]
     run.feedback = [f + 1 for f in run.feedback]
     return run
+
+
+def test_styled_figure_applies_the_module_style_inside_the_block():
+    with plots.styled_figure(2, width=3.0, height=2.0) as (fig, axes):
+        assert isinstance(fig, Figure) and len(axes) == 2
+        (line,) = axes[0].plot([0, 1], [0, 1])
+        label = axes[0].set_xlabel("x")
+    assert tuple(fig.get_size_inches()) == (6.0, 2.0)
+    assert line.get_linewidth() == 2.0  # the module's lines.linewidth, not matplotlib's 1.5
+    assert matplotlib.colors.to_hex(label.get_color()) == "#8a8a8a"
+    assert axes[0].get_facecolor()[3] == 0.0  # transparent background
+    assert not axes[0].spines["top"].get_visible()
