@@ -29,6 +29,10 @@ carry over to LLMs and which are facts about the toy world only.
 
 ## Install and open
 
+Prerequisites: [uv](https://docs.astral.sh/uv/) and Python 3.12 or later. The measurements
+quoted in the notebooks were made on an Apple M3, and every timing given here and in the
+notebooks is for that machine.
+
 ```sh
 make install                                  # uv sync --extra dev
 uv run marimo edit notebooks/00_foundations.py
@@ -69,10 +73,30 @@ missing.
   resumes from them) and the token ids of the selected dataset conversations, which decode
   back to the dataset's text. The committed files hold numbers and identifiers only.
 
-`scripts/dpo_label_diagnostic.py` is the diagnostic behind notebook 03's items 3 and 5: it
-reruns DPO on the same pairs with each pair's drawn label replaced by its true preference
-probability, or by a noisy label with a finite best margin
-(`uv run python scripts/dpo_label_diagnostic.py`, about two minutes).
+  The committed OLMo measurements were computed from three checkpoints on the Hugging Face
+  Hub, `allenai/OLMo-2-0425-1B-SFT`, `allenai/OLMo-2-0425-1B-DPO` and
+  `allenai/OLMo-2-0425-1B-Instruct`, and from the preference dataset
+  `allenai/olmo-2-0425-1b-preference-mix`, at the revisions `data/olmo/meta.json` records. The files under `data/olmo/` hold numeric measurements
+  (log-probabilities, token counts, KL values), the settings of the measurement, and
+  identifiers only (of the checkpoints, the dataset, and the neighbouring repository's
+  response items); they contain no model weights and no text from the dataset or from the
+  models.
+
+## Measurement scripts
+
+Each prints numbers a notebook quotes, with the definitions the notebook states; run any of
+them with `uv run python scripts/<name>.py`. Times are on an Apple M3.
+
+- `scripts/measure_nb00.py`: notebook 00, item 3 (the same feedback with smaller batches:
+  gaps on the shared grid, the wobble measure, the seed-to-seed range); about 10 s.
+- `scripts/measure_nb01.py`: notebook 01, item 1 (the ratios over every gradient step, read
+  in a logging copy of the training loop, the snapshot, the gaps); about 1 minute.
+- `scripts/measure_nb02.py`: notebook 02, "What GRPO aims at" (a) to (c) and the paragraphs
+  on what the collapse depends on, including the run at a lower learning rate; about
+  seven minutes.
+- `scripts/dpo_label_diagnostic.py`: notebook 03, items 3 and 5: it reruns DPO on the same
+  pairs with each pair's drawn label replaced by its true preference probability, or by a
+  noisy label with a finite best margin; about two minutes.
 
 ## Tests and lint
 
