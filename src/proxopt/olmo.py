@@ -36,7 +36,10 @@ def next_token_kl(logits_a: torch.Tensor, logits_b: torch.Tensor, response_start
     return float(ab), float(ba)
 
 
-def _margins(rows: list[dict], model: str, per_token: bool) -> list[float]:
+def implicit_margins(rows: list[dict], model: str, per_token: bool) -> list[float]:
+    """Per pair, the implicit reward margin of `model` against `sft`:
+    `(lp_w_m − lp_w_sft) − (lp_l_m − lp_l_sft)`, with each log-probability divided by its
+    token count first when `per_token` (the quantity length-normalised DPO trains on)."""
     out = []
     for r in rows:
         nw, nl = (r["n_w"], r["n_l"]) if per_token else (1, 1)
@@ -52,7 +55,7 @@ def summarize_margins(rows: list[dict]) -> dict:
     for model in ("dpo", "instruct"):
         out[model] = {}
         for version, per_token in (("sum", False), ("mean", True)):
-            m = _margins(rows, model, per_token)
+            m = implicit_margins(rows, model, per_token)
             out[model][version] = {
                 "mean_margin": sum(m) / len(m) if m else float("nan"),
                 "share_positive": sum(x > 0 for x in m) / len(m) if m else float("nan"),

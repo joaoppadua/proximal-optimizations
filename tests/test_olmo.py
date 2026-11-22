@@ -32,6 +32,14 @@ def test_summarize_margins():
     assert s["instruct"]["sum"]["share_positive"] == 0.5
 
 
+def test_implicit_margins_per_pair():
+    rows = [dict(pair=0, n_w=2, n_l=4, lp_w_sft=-4, lp_l_sft=-4, lp_w_dpo=-2, lp_l_dpo=-8, lp_w_instruct=-4, lp_l_instruct=-4),  # noqa: C408
+            dict(pair=1, n_w=2, n_l=2, lp_w_sft=-4, lp_l_sft=-4, lp_w_dpo=-6, lp_l_dpo=-4, lp_w_instruct=-3, lp_l_instruct=-4)]  # noqa: C408
+    assert olmo.implicit_margins(rows, "dpo", per_token=False) == pytest.approx([6, -2])
+    assert olmo.implicit_margins(rows, "dpo", per_token=True) == pytest.approx([1 - (-1), -1 - 0])
+    assert olmo.implicit_margins(rows, "instruct", per_token=False) == pytest.approx([0, 1])
+
+
 def test_loaders_return_none_when_files_are_missing(tmp_path):                    # Review Focus 5
     assert olmo.load_margins(tmp_path) is None and olmo.load_drift(tmp_path) is None and olmo.load_meta(tmp_path) is None
     (tmp_path / "margins.jsonl").write_text(json.dumps({"pair": 0}) + "\n")

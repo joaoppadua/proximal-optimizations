@@ -74,13 +74,13 @@ def _(DEFAULT_WORLD, exact, load_reference, np, scorer, synthesis, torch):
 
 
 @app.cell
-def _(labels, mo, synthesis, syn):
+def _(labels, mo, sampling, synthesis, syn):
     def _cost(name):
         if syn is None:
             return "(run `make synthesis`)"
         _r = syn["runs"][name][0]
         _b = syn["method"]["budget"][name]
-        if name in ("ppo", "grpo", "grpo_ppo_like"):
+        if name in sampling:
             return f"{_r.steps[-1]:,} gradient steps, {_r.feedback[-1]:,} reward calls"
         if name == "dpo":
             return f"{_r.steps[-1]:,} gradient steps on {_b['n_pairs']:,} labelled pairs"
@@ -108,9 +108,11 @@ def _(labels, mo, synthesis, syn):
     _head = "| | " + " | ".join(labels[n] for n in synthesis.NAMES) + " |\n"
     _head += "|---" * (len(synthesis.NAMES) + 1) + "|\n"
     _table = _head + "\n".join(f"| {k} | " + " | ".join(v) + " |" for k, v in _rows.items())
+    _seeds = (f"over {len(syn['seeds'])} seeds" if syn is not None
+              else "over several seeds (once `make synthesis` has computed them)")
     mo.vstack(
         [
-            mo.md(r"""
+            mo.md(rf"""
     # 04 · Synthesis: three algorithms, one world, one target
 
     ## Where we are
@@ -120,7 +122,7 @@ def _(labels, mo, synthesis, syn):
     predecessor at that notebook's own defaults. This notebook puts them side by side:
     PPO, GRPO as published, GRPO with both switches PPO-like, DPO, and PPO on a reward model
     fitted to the same pairs DPO uses, all on one world, aimed at (or measured against) one
-    target, each at a learning rate tuned for it on a small grid, over three seeds. Then it
+    target, each at a learning rate tuned for it on a small grid, {_seeds}. Then it
     looks back at the history, and ends with a reality check on three real checkpoints of
     OLMo 2 1B.
     """),
@@ -188,8 +190,9 @@ def _(mo):
     **What each method spends.** PPO and GRPO spend *reward calls*: every sampled response
     is scored by the reward function, and every batch is fresh. DPO spends *labelled pairs*:
     a fixed set, collected once from $\pi_{\text{ref}}$ and reused at every step. PPO on a
-    reward model spends the same pairs once, to fit the model, and then as many
-    reward-model calls as it likes; those cost no labels.
+    reward model acquires the same pairs once; fitting the model draws many minibatches
+    from them, and PPO then makes as many reward-model calls as it likes, which cost no
+    further labels.
 
     **Which comparison is fair.** PPO and GRPO here are scored by the true reward, exactly,
     on every sample: information that the two pair-based methods never have. Comparing DPO
@@ -201,7 +204,7 @@ def _(mo):
     $\pi^*_\beta$, the gap says how far it got. For published GRPO, which has no fixed
     target, the gap says only how far from $\pi^*_\beta$ it happens to be at the end of
     a budget; it can fall and then rise, and how far it gets depends on the learning rate
-    (measured below).
+    (the comparison below measures this).
     """)
     return
 
@@ -517,6 +520,22 @@ def _(comparison, mo, np, plots, rate, span):
         f"the seeds overlap at {', '.join(f'{n:,}' for n in _overlap)}"
     )
     _edge = comparison["method"]["grid_edge"]["ppo_rm"]
+    _cov_better = all(r["corr_covered"] > r["corr_all"] for r in _rm)
+    _mean_all = [np.mean(_rmv("corr_all", n)) for n in _counts]
+    _mean_mass = [np.mean(_rmv("covered_mass_ref", n)) for n in _counts]
+    _rises = bool(np.all(np.diff(_mean_all) > 0))
+    _mass_rises = bool(np.all(np.diff(_mean_mass) > 0))
+    _acc_text = (
+        ("Its mean correlation over all responses rises at every step up in pairs"
+         if _rises else "Its mean correlation over all responses does not rise at every step up in pairs")
+        + f" ({', '.join(f'{v:.2f}' for v in _mean_all)}). "
+        + ("In every row (every seed at every pair count) it is higher on covered responses "
+           "than on all responses." if _cov_better
+           else "It is not higher on covered responses than on all responses in every row.")
+        + (" The pairs cover more of π_ref's mass as their number grows "
+           if _mass_rises else " The covered share of π_ref's mass does not grow at every step ")
+        + f"({', '.join(f'{v:.0%}' for v in _mean_mass)})."
+    )
 
     with plots.styled_figure(2, width=4.4, height=3.4) as (_fig, _axes):
         for _name in ("dpo", "ppo_rm"):
@@ -569,9 +588,7 @@ def _(comparison, mo, np, plots, rate, span):
                 **What the file shows.** DPO ends with the lower gap {_ahead_text}. PPO on
                 the reward model ends *above* its starting gap ({_start:.4f}) in every seed
                 at {", ".join(f"{n:,}" for n in _rm_above) or "no pair count"} pairs. The
-                reward model gets more accurate with more pairs, on covered responses more
-                than on all of them, and the pairs cover more of $\pi_{{\text{{ref}}}}$'s
-                mass.
+                reward model: {_acc_text}
 
                 **A reading, not measured here.** With few pairs the reward model is
                 wrong on most responses, and PPO samples fresh responses wherever its
@@ -610,6 +627,10 @@ def _(beta_live, live_button, mo, rate, seed_live, synthesis, syn, tau_live):
     live_lr = dict(syn["lr"]) if syn is not None else dict(synthesis.DEFAULT_LR)
     _which = ("the committed rates" if syn is not None
               else "each module's default rate (no committed rates were found)")
+    _repro = (" At the defaults and seed 0 it reproduces the committed seed-0 runs."
+              if syn is not None else "")
+    _tuned = (f"The rates were tuned at $\\beta$ = {syn['beta']:g} and $\\tau$ = {syn['tau']:g} only, "
+              "and one seed" if syn is not None else "One seed")
     mo.vstack(
         [
             mo.md(
@@ -618,11 +639,10 @@ def _(beta_live, live_button, mo, rate, seed_live, synthesis, syn, tau_live):
                 button: `synthesis.compare` trains all five for that one seed, plus DPO and
                 PPO on the reward model at every pair count, with {_which}
                 ({", ".join(f"{k} {rate(v)}" for k, v in live_lr.items())}). It takes about
-                40 s on an M3 (measured: 40 and 43 s); results are cached by their
-                arguments, so returning to a setting is instant. The rates were tuned at
-                $\beta$ = 0.1 and $\tau$ = 0.25 only, and one seed shows no spread, so a
-                live run is a look, not a measurement. At the defaults and seed 0 it
-                reproduces the committed seed-0 runs.
+                40 s: measured at 40 and 43 s on the machine this set was built on (an
+                Apple M3). Results are cached by their arguments, so returning to a setting
+                is instant. {_tuned} shows no spread, so a live run is a look, not a
+                measurement.{_repro}
                 """
             ),
             mo.hstack([beta_live, tau_live, seed_live, live_button], justify="start"),
@@ -692,8 +712,10 @@ def _(
 
 
 @app.cell
-def _(mo):
-    mo.md(r"""
+def _(DEFAULT_WORLD, comparison, mo):
+    _w = DEFAULT_WORLD
+    _n_seeds = len(comparison["seeds"])
+    mo.md(rf"""
     **What carries over to real LLMs, and what does not.** What carries over is the logic of
     the comparison. Algorithms that aim at different points cannot be compared by one
     number until they aim at the same one, which is why DPO and PPO on a reward model run
@@ -703,9 +725,9 @@ def _(mo):
     gap, the reward model's correlation with the truth and the coverage of the pairs are
     exact, and the true $\tau$ is known, so $\beta/\tau$ can be set; for an LLM none of
     these is available. Which method ends with the lower gap, by how much, and at which
-    rate, are facts about this world (4 prompts, 32,768 responses per prompt, a small GRU,
-    these budgets and this grid), not about LLMs, and the plots above do not rank the
-    algorithms in general.
+    rate, are facts about this world ({_w.n_prompts} prompts, {_w.n_responses:,} responses
+    per prompt, a small GRU, these budgets, this grid and {_n_seeds} seeds), not about LLMs,
+    and the plots above do not rank the algorithms in general.
     """)
     return
 
@@ -715,8 +737,7 @@ def _(mo):
     mo.md(r"""
     ## Things to try
 
-    Make a prediction before opening each answer. The answers are computed from the
-    committed comparison (seeds 0, 1 and 2), so they agree with the tables above.
+    Make a prediction before opening each answer.
     """)
     return
 
@@ -724,6 +745,9 @@ def _(mo):
 @app.cell
 def _(mo, syn):
     mo.stop(syn is None, mo.md("*The answers need the committed comparison: run `make synthesis`.*"))
+    _seeds = ", ".join(str(x) for x in syn["seeds"])
+    mo.md(f"The answers are computed from the committed comparison (seeds {_seeds}), so they "
+          "agree with the tables above.")
     return
 
 
@@ -734,6 +758,9 @@ def _(comparison, np, rate, reveal):
     _at = {r["lr"]: r for r in _x["mean_final_gap_by_lr"]}
     _low, _used = _at[_x["rule_lr"]], _at[_x["used_lr"]]
     _best = min(_x["mean_final_gap_by_lr"], key=lambda r: r["grpo"])
+    _grid = [r["lr"] for r in _x["mean_final_gap_by_lr"]]
+    _where = ("the grid's lowest rate" if _best["lr"] == min(_grid)
+              else "the grid's highest rate" if _best["lr"] == max(_grid) else "inside the grid")
     _pts = comparison["points"]
     pair_counts = sorted({int(n) for n, _ in _pts["dpo"]})
     pair_diff = {n: np.mean([g for c, g in _pts["ppo_rm"] if int(c) == n])
@@ -750,7 +777,7 @@ def _(comparison, np, rate, reveal):
         f"ends at {_low['grpo_ppo_like']:.4f} and {_used['grpo_ppo_like']:.4f}, so the "
         f"difference between the two is {_low['grpo'] - _low['grpo_ppo_like']:.4f} at the "
         f"lower rate and {_used['grpo'] - _used['grpo_ppo_like']:.4f} at the shared one. "
-        f"Its lowest final gap on the grid is at {rate(_best['lr'])}, the grid's lowest rate. "
+        f"Its lowest final gap on the grid is at {rate(_best['lr'])}, {_where}. "
         "A likely reading, not checked here (the file keeps only the final gaps at the other "
         "rates): a smaller rate moves it less far in the same budget, and at the shared rate "
         "its gap falls before it rises, so a slow run may still be near the bottom of that "
@@ -846,9 +873,10 @@ def _(cite, mo):
             mo.md(r"""
     **Why RL came back after DPO.** What the sources recorded here say: Tülu 3 and OLMo 2
     did not replace DPO with RL; they added an RL stage after it, for tasks whose outcome a
-    program can verify. OLMo 2 chose GRPO for its 1B model as a method that needs no reward
-    model; DeepSeek-R1 chose rule-based rewards over a neural reward model to avoid reward
-    hacking. *This notebook's reading*, which none of those sources states in these words:
+    program can verify. OLMo 2 used GRPO for its 1B model, describing it as a method that
+    "forgoes the need for a reward model". DeepSeek-R1 used rule-based rewards, writing that
+    "neural reward models are susceptible to reward hacking during large-scale RL".
+    *This notebook's reading*, which none of those sources states in these words:
     a reward a program can check needs no annotator per sample, so an RL method can score
     as many fresh samples as compute allows; and an RL method samples from its own current
     policy, so it is not confined to the responses of a fixed dataset, a limit notebook
@@ -865,14 +893,15 @@ def _(cite, mo):
 def _(mo, olmo):
     margins = olmo.load_margins()
     drift = olmo.load_drift()
-    meta = olmo.load_meta() or {}
-    _missing = margins is None or drift is None
+    meta = olmo.load_meta()
+    _missing = margins is None or drift is None or meta is None
     mo.stop(
         _missing,
         mo.md(
             "### The OLMo ladder: a reality check\n\n**No OLMo measurements.** "
-            "`data/olmo/margins.jsonl` or `data/olmo/drift.jsonl` (or the directory named by "
-            "`$PROXOPT_OLMO_DIR`) was not found. Run `make olmo` to measure them."
+            "`data/olmo/margins.jsonl`, `data/olmo/drift.jsonl` or `data/olmo/meta.json` (or "
+            "the directory named by `$PROXOPT_OLMO_DIR`) was not found. Run `make olmo` to "
+            "measure them."
         ),
     )
     return drift, margins, meta
@@ -903,9 +932,11 @@ def _(cite, margins, meta, mo):
                 3. **RL with verifiable rewards, two GRPO stages in sequence**: first on
                    MATH, GSM8K and instruction-following constraints (giving the RLVR1
                    checkpoint), then on MATH only (giving Instruct). Sources: the OLMo 2
-                   paper (§5: RLVR on the 1B model with GRPO), the open-instruct
-                   documentation of the two 1B runs (both with KL coefficient 0.01, the
-                   estimator of notebook 02 added to the loss, groups of 16), and the
+                   paper (§5: RLVR on the 1B model with GRPO); the open-instruct
+                   documentation of the two 1B runs (both with KL coefficient 0.01 and the
+                   `kl3` estimator) and the training script those runs used (the estimator
+                   of notebook 02 added to the loss; groups of 16, its
+                   `number_samples_per_prompt`); and the
                    Instruct model card ("Finetuned from model: allenai/OLMo-2-0425-1B-RLVR1").
                 4. **Instruct**, the released model.
 
@@ -929,21 +960,19 @@ def _(margins, meta, mo, np, olmo, plots, torch):
         return np.array([r[k] for r in margins], dtype=float)
 
     _nw, _nl = _g("n_w"), _g("n_l")
-
-    def _margin(model, per_token):
-        a, b = (_nw, _nl) if per_token else (1.0, 1.0)
-        return (_g(f"lp_w_{model}") - _g("lp_w_sft")) / a - (_g(f"lp_l_{model}") - _g("lp_l_sft")) / b
-
     _s = olmo.summarize_margins(margins)
-    _mm = {(m, v): _margin(m, v == "mean") for m in ("dpo", "instruct") for v in ("mean", "sum")}
+    _mm = {(m, v): np.array(olmo.implicit_margins(margins, m, per_token=v == "mean"))
+           for m in ("dpo", "instruct") for v in ("mean", "sum")}
 
     def _line(model, version):
         d = _s[model][version]
         return (f"mean {d['mean_margin']:.3f}, median {np.median(_mm[(model, version)]):.3f}, "
                 f"positive in {d['share_positive']:.0%} of pairs")
 
-    _agree = {v: (np.sign(_mm[("dpo", v)]) == np.sign(_mm[("instruct", v)])).mean()
+    _zero = {v: (_mm[("dpo", v)] == 0) & (_mm[("instruct", v)] == 0) for v in ("mean", "sum")}
+    _agree = {v: (np.sign(_mm[("dpo", v)]) == np.sign(_mm[("instruct", v)]))[~_zero[v]].mean()
               for v in ("mean", "sum")}
+    _n_zero = int(_zero["mean"].sum())
     _corr = {v: np.corrcoef(_mm[("dpo", v)], _mm[("instruct", v)])[0, 1] for v in ("mean", "sum")}
     _dw = (_g("lp_w_dpo") - _g("lp_w_sft")) / _nw
     _dl = (_g("lp_l_dpo") - _g("lp_l_sft")) / _nl
@@ -997,9 +1026,10 @@ def _(margins, meta, mo, np, olmo, plots, torch):
             _hist,
             mo.md(
                 rf"""
-                **Does Instruct keep the DPO margin, pair by pair?** The two margins have the
-                same sign in {_agree['mean']:.0%} of pairs per token
-                ({_agree['sum']:.0%} summed), with a correlation of {_corr['mean']:.2f}
+                **Does Instruct keep the DPO margin, pair by pair?** Leaving out the
+                {_n_zero} pairs whose margin is exactly zero under both models (per token),
+                the two margins have the same sign in {_agree['mean']:.0%} of pairs per
+                token ({_agree['sum']:.0%} summed, leaving out {int(_zero['sum'].sum())}), with a correlation of {_corr['mean']:.2f}
                 per token ({_corr['sum']:.2f} summed). Below, each point is one pair; on the
                 dashed line Instruct's margin equals DPO's.
                 """
@@ -1083,6 +1113,8 @@ def _(drift, meta, mo, np, olmo, plots):
         )
     )
     _s1, _s2 = olmo.STEPS
+    _ids = {st: {r["item_id"] for r in drift if r["step"] == st} for st in olmo.STEPS}
+    _shared = len(_ids[_s1] & _ids[_s2])
     _ratio = {k: {st: _stats[(_s1, k)][st] / _stats[(_s2, k)][st] for st in ("mean", "median", "token")}
               for k in _names}
     _top_text = "; ".join(
@@ -1119,7 +1151,8 @@ def _(drift, meta, mo, np, olmo, plots):
                 At every token position of each text, the exact KL between the two
                 checkpoints' next-token distributions, in both directions, averaged over
                 the text's positions. These texts are not exact samples from either model
-                (they were generated at the settings above and cut at a fixed length), so
+                (they were generated at the settings above and capped at
+                {_gen.get('max_new_tokens')} new tokens), so
                 this is **not the KL between the two models**; it is the next-token KL
                 along these texts. As a check that the texts align with the later
                 checkpoint, its argmax reproduces its own greedy texts on {_greedy}.
@@ -1147,26 +1180,23 @@ def _(drift, meta, mo, np, olmo, plots):
                 per-text mean, {_ratio['kl_new_old']['median']:.1f} times by the median and
                 {_ratio['kl_new_old']['token']:.1f} times by the token-weighted mean (in the
                 other direction: {_ratio['kl_old_new']['mean']:.1f}, {_ratio['kl_old_new']['median']:.1f}
-                and {_ratio['kl_old_new']['token']:.1f}). Along these texts, the two RL stages
+                and {_ratio['kl_old_new']['token']:.1f}). The two steps are measured on
+                different texts: the DPO checkpoint's own responses for the first, the
+                Instruct checkpoint's for the second; {_shared} item ids appear in both
+                steps ({len(_ids[_s1])} and {len(_ids[_s2])} in each). Along these texts, the two RL stages
                 together moved the next-token distributions much less than the DPO stage
                 did. This measurement does not say why. What differs between the stages, as
                 `docs/olmo-facts.md` records it: the DPO stage is length-normalised DPO with
                 $\beta = 5$ on a preference mix; the RL stages are two GRPO runs with a KL
-                coefficient of 0.01, the KL estimator in the loss and groups of 16, on
+                coefficient of 0.01 and the KL estimator in the loss (groups of 16 in the
+                training script), on
                 mathematics and instruction-following data. The texts here answer the
                 neighbouring repository's general prompts, not those training data, so the
                 measurement says nothing about how far the model moved on mathematics or
                 instruction following.
                 """
             ),
-        ]
-    )
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""
+            mo.md(r"""
     **What this section does and does not connect to the toy world.** It connects through
     two quantities. The implicit reward margin is what DPO's loss pushes up (notebook 03),
     measured on a real model's own training pairs. The next-token KL is the per-token
@@ -1176,7 +1206,9 @@ def _(mo):
     gap and no frontier for OLMo; its $\beta = 5$ multiplies per-token mean log-ratios and
     cannot be compared with the toy world's $\beta$; and nothing here tests whether
     published GRPO's behaviour on the toy world (notebook 02) occurs in OLMo's RL stages.
-    """)
+    """),
+        ]
+    )
     return
 
 
