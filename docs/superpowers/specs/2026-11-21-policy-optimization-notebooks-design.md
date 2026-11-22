@@ -201,3 +201,7 @@ tests/
 ## 11. References to verify and cite
 
 Williams 1992 (REINFORCE). Schulman et al. 2015 (TRPO). Schulman et al. 2016 (GAE). Schulman et al. 2017 (PPO). Christiano et al. 2017 (RL from human preferences). Ziegler et al. 2019 (fine-tuning language models from human preferences). Stiennon et al. 2020 (learning to summarize from human feedback). Ouyang et al. 2022 (InstructGPT). Bradley and Terry 1952. Rafailov et al. 2023 (DPO). Shao et al. 2024 (DeepSeekMath, GRPO). Guo et al. 2025 (DeepSeek-R1). Lambert et al. 2024 (Tülu 3, RL with verifiable rewards). OLMo et al. 2024 (2 OLMo 2 Furious).
+
+## Errata (found during the build)
+
+- Sections 6.2 and 9 state that the KL estimator's expected gradient on fixed samples is that of `KL(π_ref ‖ π_θ)` without saying "per next-token distribution". Corrected: for one state `s_t` it is `∇KL(π_ref(·|s_t) ‖ π_θ(·|s_t))`; summed over a response sampled from `π_θ`, it is `Σ_t E_{s_t∼π_θ}[∇KL(π_ref(·|s_t) ‖ π_θ(·|s_t))]` with `∇` on the conditionals only, which is the gradient of neither sequence-level KL. Notebook 02, "What GRPO aims at" (a), gives the derivation and the measured cosines.

@@ -40,7 +40,7 @@ not affect the project but that a notebook must not copy are listed under "Notes
 | 8 | Value target `returns = A + V_old` and value loss `mean((V − returns)²)` (`gae`, `ppo_loss`) | Schulman et al. 2016; Schulman et al. 2017 | GAE §5, footnote 2: TD(λ) target `V̂^λ_t = V_φold(s_n) + Σ_l (γλ)^l δ_{t+l}` (the paper's main choice is the λ = 1 return, eq. (28)); PPO §5: `L^VF_t = (V_θ(s_t) − V^targ_t)²` | Matches (the footnote's alternative, which is what `A + V_old` is). |
 | 9 | Clipped surrogate `mean(min(ρ A, clip(ρ, 1 − ε, 1 + ε) A))`, `ρ_t = π_θ(y_t)/π_old(y_t)`; total loss `−L^CLIP + c_1 L^VF` (`ppo_loss`) | Schulman et al. 2017 (PPO) | §3, eq. (7); combined objective §5, eq. (9) | Matches, with `r_t(θ)` → `ρ_t`, `c_1` = `vf_coef`, and no entropy bonus (`c_2 = 0`). |
 | 10 | GRPO objective, per token: `min(ρ A, clip(ρ, 1 − ε, 1 + ε) A) − β D̂_KL`, averaged over tokens of a response then over the group (`grpo_loss`: mean over all `B·T` tokens) | Shao et al. 2024 | §4.1.1, eq. (3); App. A.1.6, eq. (19) | Matches. The paper averages `1/G Σ_i 1/\|o_i\| Σ_t`; all responses here have the same length `T`, so this equals the mean over `B·T` tokens. The KL term is in the loss, not in the reward: "instead of adding KL penalty in the reward, GRPO regularizes by directly adding the KL divergence between the trained policy and the reference policy to the loss" (§4.1.1). |
-| 11 | GRPO KL estimator `π_ref/π_θ − log(π_ref/π_θ) − 1`, per token (`kl_estimator`) | Shao et al. 2024 | §4.1.1, eq. (4), "the following unbiased estimator (Schulman, 2020)" | Matches exactly (claim (i) confirmed). Its gradient coefficient is given in App. A.1.6 eqs. (20)–(21): `Â_{i,t} + β(π_ref/π_θ − 1)`, which is what autograd gives on `grpo_loss`. Its expectation under samples from `π_θ` is `−β ∇KL(π_ref ‖ π_θ)` (checked numerically in this task); the paper does not state this. |
+| 11 | GRPO KL estimator `π_ref/π_θ − log(π_ref/π_θ) − 1`, per token (`kl_estimator`) | Shao et al. 2024 | §4.1.1, eq. (4), "the following unbiased estimator (Schulman, 2020)" | Matches exactly (claim (i) confirmed). Its gradient coefficient is given in App. A.1.6 eqs. (20)–(21): `Â_{i,t} + β(π_ref/π_θ − 1)`, which is what autograd gives on `grpo_loss`. For one next-token distribution (one state `s_t`), its expectation under samples from `π_θ` is `−β ∇KL(π_ref(·\|s_t) ‖ π_θ(·\|s_t))` (checked numerically in this task; the unit test in `tests/test_grpo.py` is per token and stands); the paper does not state this. *Amended in Task 14:* over a response sampled from `π_θ`, the expected gradient of the summed per-token terms is `Σ_t E_{s_t∼π_θ}[∇KL(π_ref(·\|s_t) ‖ π_θ(·\|s_t))]`, with `∇` acting on the conditionals only (the state distribution held fixed, since the samples are fixed). That is the gradient of neither sequence-level KL: `∇KL(π_ref ‖ π_θ)` weights states by `π_ref`. Measured by enumeration in notebook 02, §"What GRPO aims at" (a): cosines 0.73–0.92 with the reverse and 0.68–0.95 with the forward sequence-level gradient. |
 | 12 | GRPO advantage `A_i = (r_i − mean(r)) / (std(r) + 1e-6)` within the group, the same for every token of `y_i` (`group_advantages`) | Shao et al. 2024 | §4.1.2: "these rewards are normalized by subtracting the group average and dividing by the group standard deviation … sets the advantages Â_{i,t} of all tokens in the output as the normalized reward, i.e., Â_{i,t} = r̃_i = (r_i − mean(r))/std(r)" | Matches (claim (ii) confirmed). The paper does not say whether `std` is the sample (n − 1) or population (n) standard deviation, nor add an `ε`; the project uses the sample std (`torch.std` default) and `ε = 1e-6`. open-instruct's GRPO does the same with `ε = 1e-8`. |
 | 13 | Bradley–Terry: `p(y_1 ≻ y_2 \| x) = σ(r(x,y_1) − r(x,y_2))` | Rafailov et al. 2023 (citing Bradley and Terry 1952) | DPO §3, eq. (1) `exp(r*(x,y_1)) / (exp(r*(x,y_1)) + exp(r*(x,y_2)))`; §4 text: "p*(y_1 ≻ y_2 \| x) = σ(r*(x,y_1) − r*(x,y_2))" | Matches. The 1952 original could not be read (see "Not confirmed"). The project's preference noise, `σ((r_w − r_l)/τ)`, is the project's own; it is BT with reward `r/τ`. |
 | 14 | Reward in terms of the optimum: `r(x,y) = β log(π*(y\|x)/π_ref(y\|x)) + β log Z(x)` | Rafailov et al. 2023 | §4, eq. (5); App. A.2 eq. (17) | Matches (`π_r` → `π*`). The cancellation of `Z(x)` in the BT difference is §4 eq. (6), App. A.2. |
@@ -60,6 +60,21 @@ not affect the project but that a notebook must not copy are listed under "Notes
 - **Is π_ref fixed?** Not in iterative GRPO: Algorithm 1, line 3, "reference model π_ref ← π_θ"
   at the start of each outer iteration (§4.1.4). With one outer iteration (`I = 1`) it is the
   initial policy throughout, which is the project's setting.
+
+## Facts recorded from DeepSeek-R1 and Tülu 3 (Task 14, for notebook 02's "Where it went next")
+
+Read 2026-11-22. Quotes verbatim; a quote cut short is marked "…".
+
+- **DeepSeek-R1 (Guo et al. 2025, Nature 645, 633–638),** read at https://www.nature.com/articles/s41586-025-09422-z.
+  - Methods, "GRPO", Eqs. (1)–(3): the objective has the clipped ratio, `−β D_KL(π_θ ‖ π_ref)` in the loss with the estimator `π_ref/π_θ − log(π_ref/π_θ) − 1`, and the advantage `(r_i − mean)/std` over the group.
+  - Main: "we bypass the conventional supervised fine-tuning (SFT) phase before RL training"; section "DeepSeek-R1-Zero": "we apply the RL technique on the DeepSeek-V3 Base to train DeepSeek-R1-Zero", "we use a rule-based reward system to compute accuracy and format rewards".
+  - Methods, "Rule-based rewards": "…neural reward models are susceptible to reward hacking during large-scale RL".
+  - Methods, "Training details of DeepSeek-R1-Zero": "we set the learning rate to 3 × 10−6, the Kullback–Leibler (KL) coefficient to 0.001"; "For each question, we sample 16 outputs with a maximum length of 32,768 tokens before the 8.2k step…"; "To accelerate training, each rollout generates 8,192 outputs, which are randomly split into 16 minibatches and trained for only a single inner epoch."
+  - Same section (and "Training details of the first RL stage"): "Every 400 steps, we replace the reference model with the latest policy model." So `π_ref` is refreshed during training, unlike this project's fixed `π_ref`.
+- **Tülu 3 (Lambert et al. 2024),** read at https://arxiv.org/html/2411.15124v5.
+  - §6: "In Tülu 3, we introduce Reinforcement Learning with Verifiable Rewards (RLVR), a novel method for training language models on tasks with verifiable outcomes such as mathematical problem-solving and instruction following."
+  - §6: "We train models with RLVR following preference finetuning, and we use the PPO (Schulman et al., 2017) algorithm to optimize for the RLVR objective."
+  - §6, after Eq. (8): "We set α = 10 based on pilot experiments and did not tune it further." Table 21 (§5.4.1): "The final 8B RLVR model used β=0.05 and ω=0.0". (Notebook 02 states only the PPO fact.)
 
 ## Notes (paper-side points not to copy)
 
@@ -85,7 +100,8 @@ not affect the project but that a notebook must not copy are listed under "Notes
 | Ouyang et al. 2022 | https://arxiv.org/pdf/2203.02155 | v1 |
 | Rafailov et al. 2023 (DPO) | https://arxiv.org/pdf/2305.18290 | v3 |
 | Shao et al. 2024 (DeepSeekMath) | https://arxiv.org/pdf/2402.03300 | v3 |
-| Lambert et al. 2024 (Tülu 3) | https://arxiv.org/pdf/2411.15124 | v5 (§5.1.2 eq. (5)–(6), Table 20) |
+| Lambert et al. 2024 (Tülu 3) | https://arxiv.org/pdf/2411.15124 | v5 (§5.1.2 eq. (5)–(6), Table 20; §6 and Table 21 read in Task 14, HTML version) |
+| Guo et al. 2025 (DeepSeek-R1) | https://www.nature.com/articles/s41586-025-09422-z | Nature 645, 633–638 (Methods, read in Task 14) |
 
 ## Not confirmed
 

@@ -169,13 +169,18 @@ def _(cite, mo):
         $$
 
         So on one next-token distribution the term descends $\mathrm{KL}(\pi_{\text{ref}} \,\|\, \pi_\theta)$,
-        the *other* direction. The test suite checks both statements exactly, by enumeration
+        the *other* direction. The samples come from $\pi_{\text{old}}$, not $\pi_\theta$, so
+        the expectation above is exact at the first epoch on each batch, where
+        $\pi_{\text{old}} = \pi_\theta$ (at every step when there is one epoch per batch);
+        later epochs add the usual off-policy mismatch. The test suite checks both statements exactly, by enumeration
         over one distribution (`tests/test_grpo.py`). The paper's appendix gives the same
         gradient coefficient, $\hat A_{i,t} + \beta\,(\pi_{\text{ref}}/\pi_\theta - 1)$, without
         drawing this conclusion.
 
         Over a whole response there is one more step. Summed over its tokens, the expected
-        gradient is $\sum_t \mathbb{E}_{s_t \sim \pi_\theta}\big[\nabla\, \mathrm{KL}(\pi_{\text{ref}}(\cdot \mid s_t) \,\|\, \pi_\theta(\cdot \mid s_t))\big]$:
+        gradient (again at $\pi_{\text{old}} = \pi_\theta$, with $\nabla$ acting on the
+        conditionals $\pi_\theta(\cdot \mid s_t)$ and the distribution of the states held
+        fixed, since the samples are fixed) is $\sum_t \mathbb{E}_{s_t \sim \pi_\theta}\big[\nabla\, \mathrm{KL}(\pi_{\text{ref}}(\cdot \mid s_t) \,\|\, \pi_\theta(\cdot \mid s_t))\big]$:
         the reverse KL at each state, weighted by how often *$\pi_\theta$* reaches that state.
         The gradient of the sequence-level $\mathrm{KL}(\pi_{\text{ref}} \,\|\, \pi_\theta)$
         weights the states by $\pi_{\text{ref}}$ instead. So for responses longer than one
@@ -198,8 +203,9 @@ def _(cite, mo):
         Measured in published GRPO (a copy of `grpo.train` that logs $\sigma$ and reproduces
         its metrics exactly; seeds 0–2): the median $\sigma$ over groups with a non-zero
         spread is 0.12–0.14 in iterations 1–10 and 0.020–0.022 in iterations 141–150, so the
-        effective $\beta$ goes from about 0.013 to about 0.002 while the nominal one is 0.1
-        (at 1 epoch: 0.15, then 0.030–0.032).
+        effective $\beta$ goes from about 0.013 to about 0.002 while the nominal one is 0.1.
+        At 1 epoch the median $\sigma$ is 0.15 in iterations 1–10 and 0.030–0.032 in
+        iterations 141–150 (effective $\beta$ about 0.015, then 0.003).
         """
     )
     _c = mo.md(
@@ -268,9 +274,11 @@ def _(cite, mo):
         (4 epochs, seeds 0–2), the final drift falls as $\beta$ rises: 6.9–7.8 at
         $\beta = 0.01$, 6.7–7.4 at 0.04, 5.1–5.8 at 0.1, 2.2–2.3 at 0.3, 0.42–0.52 at 1. But
         at every $\beta$ it is far above that $\beta$'s optimum (2.98, 1.46, 0.64, 0.13, 0.014),
-        and from $\beta = 0.04$ up the gap ends above its start (at 0.01 it ends below,
-        0.221 to 0.037–0.047, because $\pi^*_{0.01}$ is itself close to the ceiling) (at 0.3: 0.044 to 0.49–0.54;
-        at 1: 0.014 to 0.33–0.41). Group size does not remove it either: final drift
+        and from $\beta = 0.04$ up the gap ends above its start: 0.160 to 0.180–0.205 at
+        0.04, 0.102 to 0.373–0.437 at 0.1, 0.044 to 0.49–0.54 at 0.3, 0.014 to 0.33–0.41 at 1.
+        At $\beta = 0.01$ it ends below its start, 0.221 to 0.037–0.047. A likely reading,
+        not separately measured: $\pi^*_{0.01}$ itself has drift 2.98, close to the ceiling,
+        so a policy piled onto maximum-reward responses is not far from it. Group size does not remove it either: final drift
         3.1–3.8 at $G = 2$, 4.8–5.4 at 4, 4.8–6.5 at 16, 4.9–6.1 at 32.
 
         **A hypothesis, not a measured mechanism.** Near the top, graded rewards differ in
@@ -339,8 +347,10 @@ def _(DEFAULT_WORLD, PPOConfig, g_view, grpo, mo, plots, ref, train_ppo):
                 ## Intuition
 
                 **The group is a cheap, critic-free baseline.** An advantage is a return
-                minus a baseline, and the best baseline for a response to $x$ is the
-                expected return of $x$ under the current policy, $J_\beta$ of that prompt.
+                minus a baseline, and the usual choice of baseline for a response to $x$ is
+                the expected return of $x$ under the current policy, $J_\beta$ of that prompt
+                (the value function; it is not exactly the variance-minimising baseline, but
+                it is what a critic learns).
                 PPO learns it with a critic. GRPO estimates it by sampling $G$ responses to
                 the same prompt and averaging: no extra network, at the price of $G$ samples
                 per prompt and an estimate whose error shrinks only like $1/\sqrt{G}$.
@@ -383,9 +393,10 @@ def _(DEFAULT_WORLD, PPOConfig, g_view, grpo, mo, plots, ref, train_ppo):
                 0.0085 at 32; the critic's is 0.0060 at every $G$ and seed, since its error is
                 one fixed number per prompt (its $V$ is 0.803–0.856 against true values
                 0.811–0.855). The exact advantages themselves have a standard deviation of
-                about 0.03–0.06. So this critic, trained for 150 iterations on a toy world, is
-                more accurate than any group up to 32; the group mean wins on cost, not
-                accuracy. A critic for an LLM is a second network the size of the policy, and
+                about 0.03–0.06. So, averaged over 20 sampling seeds, this critic, trained for
+                150 iterations on a toy world, is more accurate than the group at every $G$ up
+                to 32; single draws of a group can still beat it (RMSE as low as 0.0043 at
+                $G = 4$ and 0.0044 at $G = 32$). The group mean wins on cost, not accuracy. A critic for an LLM is a second network the size of the policy, and
                 its accuracy is not known in advance.
                 """
             ),
@@ -598,7 +609,10 @@ def _(
             mo.md(
                 f"""
                 **Dead groups.** Groups whose {grpo_cfg.group_size} task rewards all
-                tie: their advantages are 0, so their samples teach the surrogate nothing.
+                tie. With the KL in the loss their advantages are 0, so their samples teach
+                the surrogate nothing (only the KL term acts on them); with the KL in the
+                reward the shaped returns of such a group still differ by their KL terms,
+                so it is not dead to the surrogate after the first iteration.
                 {sum(_dead)} of {len(_dead) * DEFAULT_WORLD.n_prompts} groups in this run
                 ({sum(_dead) / (len(_dead) * DEFAULT_WORLD.n_prompts):.0%}).
                 """
@@ -623,7 +637,7 @@ def _(
                 f"drift ceiling, the largest drift of any π*_β. This GRPO run ends at drift "
                 f"{_kl_end:.2f}, {_where}. At the defaults (published, β = 0.1, seeds 0–2) it "
                 "ends at 5.1–5.8, past the ceiling and below the frontier: more drift than any "
-                "optimum, for less reward than the optimum with that much drift would have."
+                "optimum, for less reward than the frontier's maximum (the reward at the ceiling)."
             ),
         ]
     )
@@ -680,7 +694,9 @@ def _(cite, mo):
     tokens, a per-token ratio and clip, and the KL estimator added to the loss; the
     derivation in (a) holds for any autoregressive policy. The settings do not: DeepSeekMath
     used $\beta = 0.04$ and 64 samples per question with a single update per batch,
-    DeepSeek-R1-Zero $\beta = 0.001$ and 16 samples per question, the OLMo 2 1B runs
+    DeepSeek-R1-Zero $\beta = 0.001$ and 16 samples per question, with its reference
+    model replaced by the latest policy every 400 steps (so its KL term holds the policy
+    near a recent copy of itself, not near the starting model as here), the OLMo 2 1B runs
     $\beta = 0.01$ and 16. What does not carry over: here the response space is enumerable, so
     the drift, the gap and the drift ceiling are exact, and the collapse onto a few
     maximum-reward responses can be seen; for an LLM none of these can be computed. The
@@ -837,16 +853,21 @@ def _(reveal):
         "**4. Against PPO at equal feedback.** Press the side-by-side button in the "
         "simulation and read the feedback plots. GRPO uses 32 reward calls per batch, PPO "
         "64. Which is ahead at equal feedback?",
-        "Measured, defaults, gap at the stated number of reward calls. **PPO-like GRPO is "
-        "ahead of PPO at every point up to its end:** 0.028–0.030 against 0.066–0.088 at "
-        "640 calls, 0.023–0.026 against 0.039–0.048 at 1,280, 0.021–0.023 against "
-        "0.023–0.026 at 2,560, and 0.0175–0.0192 against 0.0184–0.0207 at 4,800, where the "
-        "GRPO runs end (PPO goes on to 0.0145–0.0157 at 9,600). At equal *gradient steps* "
-        "the order reverses from 200 steps on (0.023–0.028 against 0.021–0.023 at 200, "
-        "0.0175–0.0192 against 0.0145–0.0157 at 600). Both algorithms take 4 steps per batch "
-        "and GRPO's batch is half the size, so per reward call it takes twice the steps; "
-        "the comparison does not separate the group baseline from that. **Published GRPO** "
-        "is behind at every point: 0.136–0.204 at 640 calls and 0.373–0.437 at 4,800.",
+        "Measured, defaults, seeds 0–2 compared seed by seed (GRPO seed s against PPO seed "
+        "s), gap given as the min–max range over seeds. **Against reward calls** (read every "
+        "640 calls, the grid both runs share, and at 4,800, where GRPO ends): PPO-like GRPO "
+        "is clearly ahead in every seed up to 1,920 calls: 0.028–0.030 against 0.066–0.088 "
+        "at 640, 0.023–0.026 against 0.039–0.048 at 1,280, 0.024–0.025 against 0.029–0.032 "
+        "at 1,920. From 2,560 calls on the two are level within the seed spread: in seed 2 "
+        "PPO is ahead or level at 2,560 to 3,840 calls, and at 4,800 PPO is ahead in seeds "
+        "0 and 2 (0.0175–0.0192 against 0.0184–0.0207). PPO goes on to 0.0145–0.0157 at 9,600 calls. **Against "
+        "gradient steps** (read every 40 steps): GRPO is ahead in every seed up to 120 "
+        "steps, the order differs by seed from 160 to 280 steps, and from 320 steps on PPO "
+        "is ahead in every seed, ending at 0.0145–0.0157 against 0.0175–0.0192 at 600. Both "
+        "algorithms take 4 steps per batch and GRPO's batch is half the size, so per reward "
+        "call it takes twice the steps; the comparison does not separate the group baseline "
+        "from that. **Published GRPO** is behind PPO in every seed at every number of reward "
+        "calls read: 0.136–0.204 at 640 calls and 0.373–0.437 at 4,800.",
     )
     return
 
@@ -856,20 +877,19 @@ def _(cite, mo):
     _r1 = mo.md(r"""
     ## Where it went next
 
-    DeepSeek-R1-Zero applied GRPO, with the standardised advantage and the KL estimator
-    in the loss as above, directly to a base model, with no supervised fine-tuning first,
-    and with a rule-based reward (accuracy and format) instead of a neural reward model,
-    which they found "susceptible to reward hacking during large-scale RL"; they set the KL
-    coefficient to 0.001, sampled 16 outputs per question, and split each rollout into 16
-    minibatches for "a single inner epoch", so, unlike DeepSeekMath's run, the policy takes
-    several steps per batch and the clip can bind.
+    DeepSeek-R1-Zero applied GRPO (standardised advantage, the same KL estimator in the
+    loss) directly to a base model, with no supervised fine-tuning first and a rule-based
+    reward (accuracy and format) instead of a neural reward model, citing reward hacking.
+    Two settings differ from this notebook's: each rollout was split into 16 minibatches
+    for "a single inner epoch", so the policy takes several steps per batch, and "every 400
+    steps, we replace the reference model with the latest policy model", so $\pi_{\text{ref}}$
+    is not fixed.
     """)
     _tulu = mo.md(r"""
-    Tülu 3 called its training on a reward that is a programmatic check of the answer
-    Reinforcement Learning with Verifiable Rewards (RLVR); it optimised it with PPO, not
-    GRPO, with a reward of 10 for a correct answer and a KL penalty ($\beta = 0.05$ for its
-    final 8B model). The OLMo 2 1B model's RLVR stage used GRPO instead ($\beta = 0.01$,
-    the same KL estimator in the loss, groups of 16); notebook 04 looks at its checkpoints.
+    Tülu 3 introduced Reinforcement Learning with Verifiable Rewards (RLVR), training on a
+    programmatic check of the answer, and optimised it with PPO, not GRPO. The OLMo 2 1B
+    model's RLVR stage used GRPO ($\beta = 0.01$, the same estimator in the loss); notebook
+    04 looks at its checkpoints.
     """)
     mo.vstack(
         [
