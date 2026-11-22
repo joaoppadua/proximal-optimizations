@@ -147,6 +147,26 @@ def test_feedback_points():
     assert fig.axes[0].get_xscale() == "log"
 
 
+def test_feedback_points_repeated_x_draw_mean_marker_and_min_max_bar():
+    pts = [(100, 0.5), (100, 0.3), (100, 0.4), (1000, 0.2), (1000, 0.1), (1000, 0.3)]
+    ax = feedback_points({}, {"dpo": pts, "ppo_rm": [(100, 0.6), (1000, 0.25)]}).axes[0]
+    (container,) = [c for c in ax.containers if c.get_label() == "dpo"]
+    marker, _, (bar,) = container.lines
+    xs, ys = marker.get_data()
+    assert list(xs) == [100, 1000] and np.allclose(ys, [0.4, 0.2])
+    assert marker.get_marker() == "o" and marker.get_linestyle() == "None"
+    assert len(ax.collections) == 1
+    segments = bar.get_segments()
+    assert len(segments) == 2
+    assert sorted((float(s[0][0]), float(s[0][1]), float(s[1][1])) for s in segments) == [
+        (100.0, 0.3, 0.5), (1000.0, 0.1, 0.3)
+    ]
+    # single values per x still draw as plain markers, with no bar
+    markers = {ln.get_label(): ln for ln in ax.get_lines()}
+    xs, ys = markers["ppo_rm"].get_data()
+    assert list(xs) == [100, 1000] and list(ys) == [0.6, 0.25]
+
+
 def test_extras_curves():
     run = fake_run(extras={"train_loss": [1.0 / (i + 1) for i in range(10)],
                            "holdout_loss": [1.0 / (i + 1) + 0.1 for i in range(10)]})

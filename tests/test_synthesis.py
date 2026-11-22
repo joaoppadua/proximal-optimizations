@@ -1,0 +1,96 @@
+import json
+
+import pytest
+
+from proxopt import synthesis
+from proxopt.reference import load_reference
+from proxopt.world import DEFAULT_WORLD
+
+
+def test_configs_share_one_target():
+    c = synthesis.configs(beta=0.1, tau=0.25, seed=3, lr={n: 3e-3 for n in synthesis.NAMES})
+    assert set(c) == set(synthesis.NAMES)
+    assert c["ppo"].beta == c["grpo"].beta == c["grpo_ppo_like"].beta == 0.1
+    assert c["dpo"].beta == c["ppo_rm"].beta == pytest.approx(0.4)
+    assert (c["grpo"].std_normalize, c["grpo"].kl_in) == (True, "loss")
+    assert (c["grpo_ppo_like"].std_normalize, c["grpo_ppo_like"].kl_in) == (False, "reward")
+    assert all(cfg.seed == 3 for cfg in c.values())
+    assert all(cfg.lr == 3e-3 for cfg in c.values())
+
+
+def test_lr_grid():
+    assert synthesis.LR_GRID == (3e-4, 1e-3, 3e-3)
+
+
+def test_load_returns_none_when_missing(tmp_path):
+    assert synthesis.load(tmp_path / "nope.json") is None
+
+
+def test_load_honours_environment_variable(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROXOPT_SYNTHESIS_FILE", str(tmp_path / "missing.json"))
+    assert synthesis.load() is None
+
+
+@pytest.mark.slow
+def test_every_run_targets_beta_and_round_trips(tmp_path):
+    ref = load_reference(DEFAULT_WORLD)
+    runs = {
+        n: [synthesis.run_one(n, ref, DEFAULT_WORLD, 0.1, 0.25, 0, 3e-3, n_pairs=500)]
+        for n in synthesis.NAMES
+    }
+    assert all(r[0].target_beta == pytest.approx(0.1) for r in runs.values())
+    # ppo_rm measures against pi*_beta from step 0, not only on the returned run
+    assert runs["ppo_rm"][0].metrics["gap"][0] == pytest.approx(runs["ppo"][0].metrics["gap"][0])
+    acc = runs["ppo_rm"][0].extras["reward_model"]
+    assert set(acc) == {"corr_all", "corr_covered", "covered_mass_ref"}
+    assert -1 <= acc["corr_all"] <= 1 and -1 <= acc["corr_covered"] <= 1
+    assert 0 < acc["covered_mass_ref"] <= 1
+    result = {
+        "beta": 0.1,
+        "tau": 0.25,
+        "lr": {n: 3e-3 for n in synthesis.NAMES},
+        "runs": runs,
+        "points": {"dpo": [(500, 0.1)], "ppo_rm": [(500, 0.2)]},
+        "reward_model": [{"seed": 0, "n_pairs": 500, **acc}],
+    }
+    grid = [{"name": "ppo", "lr": 3e-3, "seeds": [0], "final_gaps": [0.01], "mean_final_gap": 0.01}]
+    synthesis.save(tmp_path / "s.json", grid, result)
+    back = synthesis.load(tmp_path / "s.json")
+    assert set(back["runs"]) == set(synthesis.NAMES)
+    assert back["runs"]["ppo"][0].metrics == runs["ppo"][0].metrics
+    assert back["grid"][0]["name"] == "ppo" and [tuple(p) for p in back["points"]["dpo"]] == [(500, 0.1)]
+    assert back["reward_model"][0]["n_pairs"] == 500
+    assert set(back["method"]["budget"]) == set(synthesis.NAMES)
+    assert set(back["method"]["feedback_units"]) == set(synthesis.NAMES)
+    # the same inputs give the same bytes
+    synthesis.save(tmp_path / "t.json", grid, result)
+    assert (tmp_path / "s.json").read_bytes() == (tmp_path / "t.json").read_bytes()
+
+
+@pytest.mark.slow
+def test_committed_file_is_complete():
+    data = synthesis.load()
+    assert data is not None and set(data["runs"]) == set(synthesis.NAMES)
+    assert all(len(v) == 3 for v in data["runs"].values())
+    assert all(r.target_beta == pytest.approx(data["beta"]) for v in data["runs"].values() for r in v)
+    for name in ("dpo", "ppo_rm"):
+        counts = [p[0] for p in data["points"][name]]
+        assert sorted(set(counts)) == list(synthesis.PAIR_COUNTS)
+        assert all(counts.count(n) == 3 for n in synthesis.PAIR_COUNTS)
+        assert counts == sorted(counts)
+    assert len(data["grid"]) == len(synthesis.NAMES) * len(synthesis.LR_GRID)
+    rows = data["reward_model"]
+    assert sorted((r["n_pairs"], r["seed"]) for r in rows) == [
+        (n, s) for n in synthesis.PAIR_COUNTS for s in (0, 1, 2)
+    ]
+    assert set(data["method"]) >= {"selection", "budget", "feedback_units"}
+
+
+def test_committed_file_has_no_machine_details():
+    path = synthesis.DEFAULT_PATH
+    if not path.exists():
+        pytest.skip("data/synthesis.json not written yet")
+    text = path.read_text()
+    assert "/Users/" not in text and "home/" not in text
+    data = json.loads(text)
+    assert not ({"time", "wall_time", "timestamp", "date"} & set(data))

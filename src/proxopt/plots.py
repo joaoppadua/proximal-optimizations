@@ -286,7 +286,8 @@ def feedback_points(
     lines: dict[str, RunLike], points: dict[str, list[tuple[int, float]]]
 ) -> Figure:
     """Gap against units of feedback: trajectories for sampling methods, markers for
-    methods trained on a fixed dataset. Log x-axis."""
+    methods trained on a fixed dataset. Where a name has several points at one x (one per
+    seed), it gets one marker at their mean with a min-to-max bar. Log x-axis."""
     colors = _colors(list(lines) + list(points))
     with _style():
         fig, (ax,) = _figure(width=6.0, height=4.0)
@@ -299,8 +300,19 @@ def feedback_points(
                 ax.fill_between(xs[keep], ys.min(0)[keep], ys.max(0)[keep],
                                 color=colors[name], alpha=_BAND_ALPHA, lw=0)
         for name, pts in points.items():
-            px, py = zip(*pts)
-            ax.plot(px, py, "o", color=colors[name], ms=8, mec="none", label=name)
+            by_x: dict[float, list[float]] = {}
+            for px, py in pts:
+                by_x.setdefault(px, []).append(py)
+            px = sorted(by_x)
+            if all(len(v) == 1 for v in by_x.values()):
+                py = [by_x[v][0] for v in px]
+                ax.plot(px, py, "o", color=colors[name], ms=8, mec="none", label=name)
+                continue
+            ys = [np.array(by_x[v], dtype=float) for v in px]
+            mean = np.array([y.mean() for y in ys])
+            err = [mean - [y.min() for y in ys], [y.max() for y in ys] - mean]
+            ax.errorbar(px, mean, yerr=err, fmt="o", color=colors[name], ms=8, mec="none",
+                        elinewidth=1.5, capsize=0, label=name)
         ax.set_xscale("log")
         ax.set_xlabel("units of feedback")
         ax.set_ylabel(f"final {GAP}")
