@@ -56,6 +56,16 @@ def gap(logp: Tensor, logp_ref: Tensor, reward: Tensor, beta: float) -> Tensor:
     return beta * kl(logp, optimum(logp_ref, reward, beta))
 
 
+def drift_ceiling(logp_ref: Tensor, reward: Tensor) -> Tensor:
+    """The beta -> 0 limit of KL(pi*_beta || pi_ref), averaged over prompts.
+
+    As beta -> 0, pi*_beta becomes pi_ref restricted to the responses of maximal reward,
+    so the limit is -log pi_ref(argmax_y r(x, y)) per prompt. No pi*_beta drifts further."""
+    best = reward == reward.max(1, keepdim=True).values
+    masked = torch.where(best, logp_ref, torch.full_like(logp_ref, -torch.inf))
+    return -masked.logsumexp(1).mean()
+
+
 def frontier(
     logp_ref: Tensor, reward: Tensor, betas: Sequence[float]
 ) -> list[tuple[float, float]]:

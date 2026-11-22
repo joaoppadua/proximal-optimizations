@@ -7,7 +7,7 @@ import torch
 from torch import Tensor
 
 from proxopt.policy import Policy
-from proxopt.train import Recorder, Run
+from proxopt.train import Recorder, Run, scorer
 from proxopt.world import World
 
 
@@ -39,6 +39,7 @@ def reinforce_loss(
 
 def train(ref: Policy, world: World, cfg: ReinforceConfig) -> Run:
     policy = ref.clone()
+    ref_scorer = scorer(ref)
     opt = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
     gen = torch.Generator().manual_seed(cfg.seed)
     rec = Recorder(world, ref, cfg.reward_mode, cfg.beta)
@@ -47,7 +48,7 @@ def train(ref: Policy, world: World, cfg: ReinforceConfig) -> Run:
         x = torch.randint(world.n_prompts, (cfg.batch_size,), generator=gen)
         y = policy.sample(x, gen)
         with torch.no_grad():
-            ref_logp = ref.token_logp(x, y)
+            ref_logp = ref_scorer.token_logp(x, y)
         loss = reinforce_loss(
             policy.token_logp(x, y), ref_logp, world.reward(x, y, cfg.reward_mode), cfg.beta,
             cfg.baseline,

@@ -48,6 +48,16 @@ class Run:
         )
 
 
+def scorer(ref: Policy) -> Policy:
+    """A copy of `ref` for computing log pi_ref, never optimised.
+
+    Its parameters are flagged trainable on purpose: PyTorch's GRU takes a different
+    code path when no parameter requires grad, so identical weights would give
+    log-probabilities about 1e-6 apart from the policy's. That noise would become a
+    spurious KL term (and, once divided by a small group std, spurious advantages)."""
+    return ref.clone()
+
+
 class Recorder:
     """Measures a policy against the true reward table and pi*_{target_beta}."""
 
@@ -55,7 +65,7 @@ class Recorder:
         self.target_beta = target_beta
         self.reward = world.reward_table(reward_mode)
         with torch.no_grad():
-            self.logp_ref = ref.all_logp()
+            self.logp_ref = scorer(ref).all_logp()
         self.steps: list[int] = []
         self.feedback: list[int] = []
         self.metrics: dict[str, list[float]] = {}

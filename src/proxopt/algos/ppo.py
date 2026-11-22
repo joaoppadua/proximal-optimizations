@@ -7,7 +7,7 @@ import torch
 from torch import LongTensor, Tensor
 
 from proxopt.policy import Policy
-from proxopt.train import Recorder, Run
+from proxopt.train import Recorder, Run, scorer
 from proxopt.world import World
 
 
@@ -88,10 +88,7 @@ def train(
             return world.reward(x, y, cfg.reward_mode)
 
     policy = ref.clone()
-    # Score pi_ref through the same kernels as the policy. PyTorch's GRU takes another
-    # code path when no parameter requires grad; its ~1e-6 differences in log pi_ref
-    # would become spurious KL rewards that Adam rescales into full-size steps.
-    ref_scorer = ref.clone()
+    ref_scorer = scorer(ref)
     opt = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
     gen = torch.Generator().manual_seed(cfg.seed)
     rec = Recorder(world, ref, cfg.reward_mode, cfg.beta if target_beta is None else target_beta)

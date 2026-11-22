@@ -7,7 +7,7 @@ from proxopt import exact
 from proxopt.algos import reinforce
 from proxopt.algos.reinforce import ReinforceConfig, reinforce_loss
 from proxopt.reference import load_reference, train_reference
-from proxopt.train import Run
+from proxopt.train import Run, scorer
 from proxopt.world import DEFAULT_WORLD, TINY_WORLD
 from tests.helpers import flat_grad
 
@@ -50,3 +50,12 @@ def test_run_record_and_determinism():
 def test_reinforce_reduces_gap():
     run = reinforce.train(load_reference(DEFAULT_WORLD), DEFAULT_WORLD, ReinforceConfig())
     assert run.metrics["gap"][-1] < 0.5 * run.metrics["gap"][0]
+
+
+def test_scorer_matches_a_trainable_clone_bit_for_bit():
+    ref = load_reference(DEFAULT_WORLD)
+    g = torch.Generator().manual_seed(0)
+    x = torch.randint(DEFAULT_WORLD.n_prompts, (64,), generator=g)
+    y = ref.sample(x, g)
+    with torch.no_grad():
+        assert torch.equal(scorer(ref).token_logp(x, y), ref.clone().token_logp(x, y))

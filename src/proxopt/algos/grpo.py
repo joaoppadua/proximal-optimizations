@@ -10,7 +10,7 @@ from torch import Tensor
 
 from proxopt import exact
 from proxopt.policy import Policy
-from proxopt.train import Recorder, Run
+from proxopt.train import Recorder, Run, scorer
 from proxopt.world import World
 
 
@@ -66,6 +66,19 @@ def grpo_loss(
     return -per_token.mean(), ratios.detach()
 
 
+def shaped_rewards(
+    rewards: Tensor, logp_old: Tensor, ref_logp: Tensor, beta: float, kl_in: str
+) -> Tensor:
+    """The rewards the group baseline sees: the task reward r, [B], minus
+    beta * sum_t (logp_old_t - ref_logp_t) when `kl_in == "reward"` (as in PPO);
+    r unchanged when `kl_in == "loss"` (the KL term then goes into `grpo_loss`)."""
+    if kl_in == "reward":
+        return rewards - beta * (logp_old - ref_logp).sum(1)
+    if kl_in == "loss":
+        return rewards
+    raise ValueError(f"unknown kl_in: {kl_in!r}")
+
+
 def _groups(world: World, group_size: int) -> Tensor:
     """Prompts for one group per prompt, in order: [0] * G, [1] * G, ...; shape [P * G]."""
     return torch.arange(world.n_prompts).repeat_interleave(group_size)
@@ -79,6 +92,7 @@ def train(ref: Policy, world: World, cfg: GRPOConfig) -> Run:
     if cfg.kl_in not in ("loss", "reward"):
         raise ValueError(f"unknown kl_in: {cfg.kl_in!r}")
     policy = ref.clone()
+    ref_scorer = scorer(ref)
     opt = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
     gen = torch.Generator().manual_seed(cfg.seed)
     rec = Recorder(world, ref, cfg.reward_mode, cfg.beta)
@@ -90,12 +104,11 @@ def train(ref: Policy, world: World, cfg: GRPOConfig) -> Run:
         y = policy.sample(x, gen)
         with torch.no_grad():
             logp_old = policy.token_logp(x, y)
-            ref_logp = ref.token_logp(x, y)
+            ref_logp = ref_scorer.token_logp(x, y)
             rewards = world.reward(x, y, cfg.reward_mode)
             groups = rewards.view(world.n_prompts, cfg.group_size)
             dead_groups.append(int((groups == groups[:, :1]).all(1).sum()))
-            if cfg.kl_in == "reward":
-                rewards = rewards - cfg.beta * (logp_old - ref_logp).sum(1)
+            rewards = shaped_rewards(rewards, logp_old, ref_logp, cfg.beta, cfg.kl_in)
             advantages = group_advantages(
                 rewards.view(world.n_prompts, cfg.group_size), cfg.std_normalize
             ).flatten()
@@ -129,10 +142,11 @@ def baseline_comparison(
     with torch.no_grad():
         logits, values = policy(x, y)
         logp = torch.log_softmax(logits, dim=-1).gather(-1, y.unsqueeze(-1)).squeeze(-1)
-        ref_logp = ref.token_logp(x, y)
+        ref_scorer = scorer(ref)
+        ref_logp = ref_scorer.token_logp(x, y)
         ret = world.reward(x, y, reward_mode) - beta * (logp - ref_logp).sum(1)
         true_values = exact.prompt_values(
-            policy.all_logp(), ref.all_logp(), world.reward_table(reward_mode), beta
+            policy.all_logp(), ref_scorer.all_logp(), world.reward_table(reward_mode), beta
         )
         group_mean = ret.view(world.n_prompts, group_size).mean(1).repeat_interleave(group_size)
     return {"exact": ret - true_values[x], "group": ret - group_mean, "critic": ret - values[:, 0]}

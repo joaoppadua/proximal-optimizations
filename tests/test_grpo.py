@@ -6,6 +6,7 @@ import torch
 from proxopt.algos import grpo
 from proxopt.algos.grpo import GRPOConfig, group_advantages, grpo_loss, kl_estimator
 from proxopt.reference import load_reference
+from proxopt.train import scorer
 from proxopt.world import DEFAULT_WORLD
 from tests.helpers import flat_grad
 
@@ -73,3 +74,23 @@ def test_published_grpo_raises_reward_and_ppo_like_grpo_closes_the_gap():  # spe
     assert like.metrics["gap"][-1] < 0.25 * like.metrics["gap"][0]
     assert pub.feedback[-1] == cfg.iterations * DEFAULT_WORLD.n_prompts * cfg.group_size
     assert pub.metrics == grpo.train(ref, DEFAULT_WORLD, cfg).metrics
+
+
+def test_tied_task_rewards_give_exactly_zero_advantage_with_kl_in_reward():  # Review Focus 2
+    # The first iteration of train(), composed from its pieces: the policy equals the
+    # reference, so the folded-in KL term must be exactly 0, not ~1e-7 noise that the
+    # std division would blow up into spurious advantages.
+    w, cfg = DEFAULT_WORLD, GRPOConfig(reward_mode="verifiable", kl_in="reward")
+    ref = load_reference(w)
+    policy = ref.clone()
+    x = torch.arange(w.n_prompts).repeat_interleave(cfg.group_size)
+    y = policy.sample(x, torch.Generator().manual_seed(cfg.seed))
+    with torch.no_grad():
+        logp_old = policy.token_logp(x, y)
+        ref_logp = scorer(ref).token_logp(x, y)
+    task = w.reward(x, y, cfg.reward_mode).view(w.n_prompts, cfg.group_size)
+    shaped = grpo.shaped_rewards(task.flatten(), logp_old, ref_logp, cfg.beta, cfg.kl_in)
+    adv = group_advantages(shaped.view(w.n_prompts, cfg.group_size), cfg.std_normalize)
+    tied = (task == task[:, :1]).all(1)
+    assert tied.any()
+    assert torch.equal(adv[tied], torch.zeros_like(adv[tied]))

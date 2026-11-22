@@ -62,3 +62,14 @@ def test_evaluate():
         exact.prompt_values(logp, ref, r, beta).mean(),
         exact.objective(logp, ref, r, beta),
     )
+
+
+def test_drift_ceiling_is_the_small_beta_limit_and_bounds_the_frontier():
+    for seed in (0, 1):
+        _, ref, r = tables(seed)
+        for rewards in (r, (4 * r).round() / 4):  # unique maxima, then tied maxima
+            ceiling = exact.drift_ceiling(ref, rewards)
+            limit = exact.kl(exact.optimum(ref, rewards, 1e-4), ref)
+            assert (ceiling - limit).abs() < 1e-3
+            pts = exact.frontier(ref, rewards, [10.0, 1.0, 0.1, 0.01, 1e-3])
+            assert all(drift <= ceiling + 1e-6 for drift, _ in pts)
