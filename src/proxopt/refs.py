@@ -1,9 +1,11 @@
-"""The papers the notebooks cite, each field copied from the page in `url` (or, for the two
-pre-arXiv papers, from the DOI's Crossref record). Notebooks cite only through `cite`.
+"""The papers the notebooks cite, each field copied from the page in `url` (or, where `url` is a
+DOI, from that DOI's Crossref record). Notebooks cite only through `cite`.
 
-Authors: up to six as listed on the source page, then "et al.". `year` is the year of the
-version at `url` (arXiv: first submission). `venue` is the publication venue when the page
-names one, otherwise "arXiv preprint arXiv:NNNN.NNNNN"."""
+Authors: up to six as listed on the source page, then "et al.". `venue` is the publication
+venue of the cited version when its source names one, otherwise "arXiv preprint
+arXiv:NNNN.NNNNN". `year` is the venue's year when a venue is named, otherwise the year of
+first submission. (olmo2024 cites the full arXiv version, a preprint first submitted in 2024;
+its shorter COLM 2025 version is mentioned in `venue` but is not the version cited.)"""
 
 from dataclasses import dataclass
 
@@ -76,7 +78,7 @@ REFS: dict[str, Ref] = {
         "Pamela Mishkin, et al.",
         year=2022,
         title="Training language models to follow instructions with human feedback",
-        venue="Advances in Neural Information Processing Systems (NeurIPS 2022)",
+        venue="Advances in Neural Information Processing Systems 35 (NeurIPS 2022)",
         url="https://arxiv.org/abs/2203.02155",
     ),
     "bradley1952": Ref(
@@ -103,13 +105,12 @@ REFS: dict[str, Ref] = {
         url="https://arxiv.org/abs/2402.03300",
     ),
     "guo2025": Ref(
-        authors="DeepSeek-AI, Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, "
+        authors="Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, "
         "et al.",
         year=2025,
-        title="DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement "
-        "Learning",
-        venue="Nature 645, 633-638",
-        url="https://arxiv.org/abs/2501.12948",
+        title="DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning",
+        venue="Nature 645(8081), 633-638",
+        url="https://doi.org/10.1038/s41586-025-09422-z",
     ),
     "lambert2024": Ref(
         authors="Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, "

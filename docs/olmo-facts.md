@@ -54,12 +54,25 @@ on `--model_name_or_path allenai/OLMo-2-0425-1B-SFT` with
 > `--dpo_loss_type dpo_norm \`
 > `--dpo_beta 5`
 
-What `dpo_norm` computes, from
-https://github.com/allenai/open-instruct/blob/a4cd966a9e202843baba653115045e6fd6f473db/open_instruct/dpo_utils.py:
-`is_average_loss` is true for `dpo_norm`, and the training script passes
-`average_log_prob=args.loss_type.is_average_loss` (`open_instruct/dpo_tune_cache.py`), so the
-sequence log-probabilities are `(per_token_logps * loss_mask).sum(-1) / loss_mask.sum(-1)`, the
-per-token mean, before the usual `-F.logsigmoid(beta * logits)`. This is Tülu 3 eq. (6)
+What `dpo_norm` computes, read in the code at commit 745bf58d321c, the commit the same
+`docs/olmo2.md` names for the 1B RLVR experiments of the same weeks (run names dated 0423 and
+0427; the DPO run is dated 0424). The DPO run's own commit is not documented. In
+https://github.com/allenai/open-instruct/blob/745bf58d321c/open_instruct/dpo_tune_cache.py,
+lines 793-794:
+
+> `average_log_prob_loss_types = ["simpo", "dpo_norm"]`
+> `average_log_prob = args.dpo_loss_type in average_log_prob_loss_types`
+
+and in https://github.com/allenai/open-instruct/blob/745bf58d321c/open_instruct/dpo_utils.py,
+`_get_batch_logps`, lines 170-171:
+
+> `if average_log_prob:`
+> `    return (per_token_logps * loss_mask).sum(-1) / loss_mask.sum(-1)`
+
+that is, the per-token mean log-probability of each response, which then enters the usual
+`dpo_loss` (line 73, quoted up to the label-smoothing term, which is 0 by default:
+`losses = -F.logsigmoid(beta * logits) * (1 - label_smoothing)`).
+This is Tülu 3 eq. (6)
 (https://arxiv.org/pdf/2411.15124, v5, §5.1.2):
 
 > We find (in Section 5.4) that length-normalized DPO works best
