@@ -22,6 +22,11 @@ class Policy(nn.Module):
         self.gru = nn.GRU(2 * hidden, hidden, batch_first=True)
         self.policy_head = nn.Linear(hidden, v)
         self.value_head = nn.Linear(hidden, 1)
+        # An untrained critic predicts 0, a neutral baseline, instead of injecting noise
+        # advantages. Zeroed after the default init so no random draw changes.
+        with torch.no_grad():
+            self.value_head.weight.zero_()
+            self.value_head.bias.zero_()
 
     def _step(self, prev: torch.Tensor, px: torch.Tensor, h: torch.Tensor):
         """One GRU step. prev, [B]; px (prompt embedding), [B, H]; h, [B, H].

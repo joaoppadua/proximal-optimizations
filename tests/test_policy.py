@@ -55,3 +55,11 @@ def test_clone_is_independent():
             prm.add_(1.0)
     assert not torch.equal(p.all_logp(), q.all_logp())
     assert all(prm.requires_grad for prm in q.parameters())
+
+
+def test_fresh_policy_values_are_zero():
+    pol = Policy(TINY_WORLD)
+    x = torch.arange(TINY_WORLD.n_prompts)
+    y = pol.sample(x, torch.Generator().manual_seed(0))
+    _, values = pol(x, y)
+    assert torch.equal(values, torch.zeros_like(values))
