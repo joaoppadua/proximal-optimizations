@@ -1,7 +1,8 @@
 import torch
 
 from proxopt.policy import Policy
-from proxopt.world import TINY_WORLD, World
+from proxopt.reference import load_reference
+from proxopt.world import DEFAULT_WORLD, TINY_WORLD, World
 
 ONE_STEP = World(vocab_size=8, length=1, targets=(3,))
 
@@ -20,6 +21,18 @@ def test_token_logp_sums_to_all_logp():
     p = Policy(w)
     x = torch.zeros(w.n_responses, dtype=torch.long)
     assert torch.allclose(p.token_logp(x, w.all_responses()).sum(1), p.all_logp()[0], atol=1e-5)
+
+
+def test_token_logp_sums_to_all_logp_on_the_default_world():
+    # every exact metric rests on all_logp; check it on every prompt of the default world
+    w = DEFAULT_WORLD
+    ref = load_reference(w)
+    y = w.all_responses()
+    with torch.no_grad():
+        table = ref.all_logp()
+        for prompt in range(w.n_prompts):
+            x = torch.full((w.n_responses,), prompt, dtype=torch.long)
+            assert torch.allclose(ref.token_logp(x, y).sum(1), table[prompt], atol=1e-4)
 
 
 def test_logits_do_not_see_the_token_they_predict():

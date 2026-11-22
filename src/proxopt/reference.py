@@ -33,17 +33,19 @@ def train_reference(
     lr: float = 1e-2,
 ) -> Policy:
     """Maximum-likelihood training on `sample_corpus`. Deterministic given the arguments;
-    the caller's global torch random state is restored afterwards. Returns a frozen policy."""
+    the caller's global torch random state is restored afterwards. Returns a frozen policy.
+    Training runs with gradients enabled, so a first call inside `torch.no_grad()` works."""
     prompts, responses = sample_corpus(world, n, seed)
     with torch.random.fork_rng():
         torch.manual_seed(seed)
         policy = Policy(world)
     opt = torch.optim.Adam(policy.parameters(), lr=lr)
-    for _ in range(steps):
-        opt.zero_grad()
-        loss = -policy.token_logp(prompts, responses).sum(dim=-1).mean()
-        loss.backward()
-        opt.step()
+    with torch.enable_grad():
+        for _ in range(steps):
+            opt.zero_grad()
+            loss = -policy.token_logp(prompts, responses).sum(dim=-1).mean()
+            loss.backward()
+            opt.step()
     return policy.requires_grad_(False)
 
 

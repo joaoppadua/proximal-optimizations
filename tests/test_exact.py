@@ -62,6 +62,11 @@ def test_evaluate():
         exact.prompt_values(logp, ref, r, beta).mean(),
         exact.objective(logp, ref, r, beta),
     )
+    # an asymmetric case: the two KL directions must not be swapped
+    m = exact.evaluate(logp, ref, r, beta)
+    assert abs(m["kl"] - exact.kl(logp, ref).item()) < 1e-6
+    assert abs(m["kl_rev"] - exact.kl(ref, logp).item()) < 1e-6
+    assert abs(m["kl"] - m["kl_rev"]) > 1e-3
 
 
 def test_drift_ceiling_is_the_small_beta_limit_and_bounds_the_frontier():

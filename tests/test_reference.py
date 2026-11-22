@@ -3,6 +3,7 @@ import torch
 from proxopt import exact
 from proxopt.reference import load_reference, sample_corpus, train_reference
 from proxopt.world import DEFAULT_WORLD as W
+from proxopt.world import TINY_WORLD
 
 
 def test_corpus_style():
@@ -33,3 +34,10 @@ def test_reference_has_the_style_and_is_mediocre():
 
 def test_load_reference_returns_fresh_copies():
     assert load_reference(W) is not load_reference(W)
+
+
+def test_train_reference_works_inside_no_grad():
+    with torch.no_grad():
+        inside = train_reference(TINY_WORLD, seed=0, steps=5)
+    outside = train_reference(TINY_WORLD, seed=0, steps=5)
+    assert torch.equal(inside.all_logp(), outside.all_logp())
