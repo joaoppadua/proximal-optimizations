@@ -51,6 +51,35 @@ def test_fewer_pairs_than_a_batch():  # Review Focus 3
     assert run.feedback[-1] == 8
 
 
+def test_pair_loss_equals_dpo_loss_on_the_full_data():
+    data = sample_pairs(W, REF, 200, 0.5, "uniform", seed=0)
+    pol = dpo.train(REF, W, data, DPOConfig(steps=20, lr=1e-2), 0.5).policy
+    with torch.no_grad():
+        expected = dpo_loss(
+            pol.token_logp(data.prompts, data.winners).sum(1),
+            pol.token_logp(data.prompts, data.losers).sum(1),
+            REF.token_logp(data.prompts, data.winners).sum(1),
+            REF.token_logp(data.prompts, data.losers).sum(1),
+            0.4,
+        ).item()
+    assert dpo.pair_loss(pol, REF, data, 0.4) == pytest.approx(expected, abs=1e-5)
+    assert dpo.pair_loss(REF, REF, data, 0.4) == pytest.approx(math.log(2), abs=1e-6)
+
+
+def test_loss_curves_are_recorded_and_holdout_changes_nothing_else():
+    data = sample_pairs(W, REF, 200, 0.5, "uniform", seed=0)
+    holdout = sample_pairs(W, REF, 100, 0.5, "uniform", seed=1)
+    cfg = DPOConfig(steps=25)
+    plain = dpo.train(REF, W, data, cfg, 0.5)
+    held = dpo.train(REF, W, data, cfg, 0.5, holdout=holdout)
+    assert "holdout_loss" not in plain.extras
+    assert len(plain.extras["train_loss"]) == len(plain.steps)
+    assert len(held.extras["holdout_loss"]) == len(held.extras["train_loss"]) == len(held.steps)
+    assert held.metrics == plain.metrics
+    assert held.extras["train_loss"] == plain.extras["train_loss"]
+    assert held.extras["train_loss"][0] == pytest.approx(math.log(2), abs=1e-6)
+
+
 @pytest.mark.slow
 def test_dpo_reduces_gap_on_the_default_world_and_is_deterministic():
     ref = load_reference(DEFAULT_WORLD)

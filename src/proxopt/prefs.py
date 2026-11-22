@@ -66,6 +66,12 @@ def coverage_mask(world: World, data: PrefData) -> torch.Tensor:
     return mask
 
 
+def covered_mass(world: World, data: PrefData, logp: torch.Tensor) -> float:
+    """Mean over prompts of the probability mass `logp.exp()` ([P, N]) puts on the
+    responses that appear in `data` for that prompt."""
+    return (logp.exp() * coverage_mask(world, data)).sum(1).mean().item()
+
+
 class RewardModel(nn.Module):
     """Scalar score r_hat(x, y). A GRU reads the whole response, seeded with the prompt
     embedding at every step; a linear head reads its final state."""

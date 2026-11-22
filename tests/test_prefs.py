@@ -1,7 +1,9 @@
 import torch
 
 from proxopt.prefs import (
+    PrefData,
     coverage_mask,
+    covered_mass,
     fit_reward_model,
     reward_model_table,
     sample_pairs,
@@ -53,6 +55,22 @@ def test_coverage_mask():
     m = coverage_mask(W, d)
     assert m.shape == (2, 9) and m.sum() <= 6
     assert m[d.prompts, idx(d.winners)].all() and m[d.prompts, idx(d.losers)].all()
+
+
+def test_covered_mass_by_hand():
+    # prompt 0 compares responses 0 and 1, prompt 1 compares responses 8 and 3
+    d = PrefData(
+        torch.tensor([0, 1]), torch.tensor([[0, 0], [2, 2]]), torch.tensor([[0, 1], [1, 0]])
+    )
+    probs = torch.stack([torch.arange(1.0, 10.0) / 45, torch.full((9,), 1 / 9)])
+    expected = (3 / 45 + 2 / 9) / 2
+    assert abs(covered_mass(W, d, probs.log()) - expected) < 1e-6
+
+
+def test_full_coverage_gives_mass_one():
+    y = W.all_responses()
+    d = PrefData(torch.tensor([0] * 9 + [1] * 9), torch.cat([y, y]), torch.cat([y, y]).roll(1, 0))
+    assert abs(covered_mass(W, d, REF.all_logp().detach()) - 1.0) < 1e-6
 
 
 def test_reward_model_learns_r_over_tau_up_to_a_constant():
