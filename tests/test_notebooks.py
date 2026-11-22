@@ -86,10 +86,25 @@ def _section(outputs: list[str], start: str, stop: str) -> list[str]:
     return outputs[i:j]
 
 
-# Text that only the gated cells produce; each appears when the data are there.
-COMPARISON_ONLY = ("The committed comparison", "do not rank the algorithms",
-                   "What carries over", "committed seed-0", "Show the answer")
-OLMO_ONLY = ("What DPO learned", "next-token KL", "What this section does")
+# Text that only the gated cells produce (or that is shown only when the data are loaded);
+# every phrase appears in normal mode. Matching is case-insensitive.
+COMPARISON_ONLY = (
+    "the committed comparison",
+    "from the committed comparison",
+    "tuned for it on a small grid",
+    "the comparison below measures",
+    "pairs in the comparison",
+    "do not rank the algorithms",
+    "what carries over",
+    "committed seed-0",
+    "at the rule's own rate",
+)
+OLMO_ONLY = ("what dpo learned", "next-token kl", "what this section does",
+             "the checkpoints measured here")
+
+
+def _lower_text(outputs: list[str]) -> str:
+    return " ".join(outputs).lower()
 
 
 def _olmo_without_meta(tmp_path: Path) -> Path:
@@ -100,8 +115,8 @@ def _olmo_without_meta(tmp_path: Path) -> Path:
 
 @pytest.mark.slow
 def test_synthesis_notebook_renders_every_section_on_the_committed_data():
-    text = " ".join(rendered_outputs({}))
-    for s in COMPARISON_ONLY[:3] + OLMO_ONLY:
+    text = _lower_text(rendered_outputs({}))
+    for s in COMPARISON_ONLY + OLMO_ONLY:
         assert s in text, s
     assert "make synthesis" not in text and "make olmo" not in text
 
@@ -115,10 +130,10 @@ def test_synthesis_notebook_without_olmo_data_shows_only_the_notice(case, tmp_pa
     outputs = rendered_outputs({"PROXOPT_OLMO_DIR": str(root)})
     section = _section(outputs, "The OLMo ladder", "References")
     assert len(section) == 1 and "make olmo" in section[0], section
-    text = " ".join(outputs)
+    text = _lower_text(outputs)
     for s in OLMO_ONLY:
         assert s not in text, s
-    assert "The committed comparison" in text
+    assert "the committed comparison" in text
 
 
 @pytest.mark.slow
@@ -126,11 +141,11 @@ def test_synthesis_notebook_without_the_comparison_shows_the_notice_and_the_live
     """Without the precomputed comparison, the notebook names `make synthesis`, keeps the
     live cell, and says nothing about a comparison it does not have."""
     outputs = rendered_outputs({"PROXOPT_SYNTHESIS_FILE": str(tmp_path / "missing.json")})
-    text = " ".join(outputs)
-    assert "make synthesis" in text and "Other settings, live" in text
+    text = _lower_text(outputs)
+    assert "make synthesis" in text and "other settings, live" in text
     for s in COMPARISON_ONLY:
         assert s not in text, s
-    assert "What DPO learned" in text
+    assert "what dpo learned" in text
 
 
 def test_early_notebooks_do_not_use_olmo():

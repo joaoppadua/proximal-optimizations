@@ -108,8 +108,14 @@ def _(labels, mo, sampling, synthesis, syn):
     _head = "| | " + " | ".join(labels[n] for n in synthesis.NAMES) + " |\n"
     _head += "|---" * (len(synthesis.NAMES) + 1) + "|\n"
     _table = _head + "\n".join(f"| {k} | " + " | ".join(v) + " |" for k, v in _rows.items())
-    _seeds = (f"over {len(syn['seeds'])} seeds" if syn is not None
-              else "over several seeds (once `make synthesis` has computed them)")
+    _plan = (
+        f", each at a learning rate tuned for it on a small grid, over {len(syn['seeds'])} seeds"
+        if syn is not None
+        else "; the precomputed runs are not loaded (run `make synthesis`), and a live run for "
+        "one seed is available below"
+    )
+    _costs = (" The costs are per run, from the committed comparison; they are budgets, not "
+              "results." if syn is not None else "")
     mo.vstack(
         [
             mo.md(rf"""
@@ -122,15 +128,14 @@ def _(labels, mo, sampling, synthesis, syn):
     predecessor at that notebook's own defaults. This notebook puts them side by side:
     PPO, GRPO as published, GRPO with both switches PPO-like, DPO, and PPO on a reward model
     fitted to the same pairs DPO uses, all on one world, aimed at (or measured against) one
-    target, each at a learning rate tuned for it on a small grid, {_seeds}. Then it
+    target{_plan}. Then it
     looks back at the history, and ends with a reality check on three real checkpoints of
     OLMo 2 1B.
     """),
             mo.md(_table),
             mo.md(
                 "PPO-like GRPO is GRPO with the division by the group's standard deviation "
-                "off and the KL in the reward (notebook 02's two switches). The costs are "
-                "per run, from the committed comparison; they are budgets, not results."
+                "off and the KL in the reward (notebook 02's two switches)." + _costs
             ),
         ]
     )
@@ -183,13 +188,14 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    mo.md(r"""
+def _(mo, syn):
+    _measured = " (the comparison below measures this)" if syn is not None else ""
+    mo.md(rf"""
     ## Intuition
 
     **What each method spends.** PPO and GRPO spend *reward calls*: every sampled response
     is scored by the reward function, and every batch is fresh. DPO spends *labelled pairs*:
-    a fixed set, collected once from $\pi_{\text{ref}}$ and reused at every step. PPO on a
+    a fixed set, collected once from $\pi_{{\text{{ref}}}}$ and reused at every step. PPO on a
     reward model acquires the same pairs once; fitting the model draws many minibatches
     from them, and PPO then makes as many reward-model calls as it likes, which cost no
     further labels.
@@ -203,14 +209,20 @@ def _(mo):
     **What a gap means for a run that aims elsewhere.** For a run whose target is
     $\pi^*_\beta$, the gap says how far it got. For published GRPO, which has no fixed
     target, the gap says only how far from $\pi^*_\beta$ it happens to be at the end of
-    a budget; it can fall and then rise, and how far it gets depends on the learning rate
-    (the comparison below measures this).
+    a budget; it can fall and then rise, and how far it gets depends on the learning
+    rate{_measured}.
     """)
     return
 
 
 @app.cell
-def _(cite, mo, prefs, source_md, synthesis):
+def _(cite, mo, prefs, source_md, synthesis, syn):
+    if syn is not None:
+        _b = syn["method"]["budget"]["ppo_rm"]
+        _fit = (f"{_b['reward_model_steps']} steps of {_b['reward_model_batch_size']} pairs "
+                "in the comparison")
+    else:
+        _fit = f"`synthesis.run_one` uses {synthesis.RM_STEPS} steps of {synthesis.RM_BATCH} pairs"
     mo.vstack(
         [
             mo.md(
@@ -229,8 +241,7 @@ def _(cite, mo, prefs, source_md, synthesis):
                 the pairs by the Bradley–Terry likelihood (the DPO paper's eq. 1, citing
                 Bradley and Terry),
                 $L_{{\text{{RM}}}} = -\,\mathbb{{E}}_{{(x, y_w, y_l)}}\big[\log \sigma\big(\hat r(x, y_w) - \hat r(x, y_l)\big)\big]$,
-                with Adam on minibatches ({synthesis.RM_STEPS} steps of
-                {synthesis.RM_BATCH} pairs in the comparison):
+                with Adam on minibatches ({_fit}):
                 """
             ),
             mo.md(source_md(prefs.fit_reward_model)),
@@ -744,7 +755,7 @@ def _(mo):
 
 @app.cell
 def _(mo, syn):
-    mo.stop(syn is None, mo.md("*The answers need the committed comparison: run `make synthesis`.*"))
+    mo.stop(syn is None, mo.md("*The answers are computed from the precomputed runs, which are not loaded: run `make synthesis`.*"))
     _seeds = ", ".join(str(x) for x in syn["seeds"])
     mo.md(f"The answers are computed from the committed comparison (seeds {_seeds}), so they "
           "agree with the tables above.")
@@ -866,15 +877,16 @@ def _(cite, mo):
             mo.md(cite("lambert2024", "olmo2024")),
             mo.md(r"""
     **2025.** DeepSeek-R1-Zero applied GRPO directly to a base model, with no supervised
-    fine-tuning first, and with a rule-based reward for accuracy and format, because
-    "neural reward models are susceptible to reward hacking during large-scale RL".
+    fine-tuning first, and with a rule-based reward for accuracy and format; its authors
+    write that "neural reward models are susceptible to reward hacking during large-scale
+    RL".
     """),
             mo.md(cite("guo2025")),
             mo.md(r"""
     **Why RL came back after DPO.** What the sources recorded here say: Tülu 3 and OLMo 2
-    did not replace DPO with RL; they added an RL stage after it, for tasks whose outcome a
-    program can verify. OLMo 2 used GRPO for its 1B model, describing it as a method that
-    "forgoes the need for a reward model". DeepSeek-R1 used rule-based rewards, writing that
+    did not replace DPO with RL; they added an RL stage after it: RLVR, which Tülu 3
+    describes as training "on tasks with verifiable outcomes". OLMo 2 used GRPO for its 1B
+    model, describing it as a method that "forgoes the need for a reward model". DeepSeek-R1 used rule-based rewards, writing that
     "neural reward models are susceptible to reward hacking during large-scale RL".
     *This notebook's reading*, which none of those sources states in these words:
     a reward a program can check needs no annotator per sample, so an RL method can score
@@ -933,10 +945,12 @@ def _(cite, margins, meta, mo):
                    MATH, GSM8K and instruction-following constraints (giving the RLVR1
                    checkpoint), then on MATH only (giving Instruct). Sources: the OLMo 2
                    paper (§5: RLVR on the 1B model with GRPO); the open-instruct
-                   documentation of the two 1B runs (both with KL coefficient 0.01 and the
-                   `kl3` estimator) and the training script those runs used (the estimator
-                   of notebook 02 added to the loss; groups of 16, its
-                   `number_samples_per_prompt`); and the
+                   documentation of the 1B runs (`--beta 0.01`, a KL coefficient of 0.01, in
+                   both stages; the second stage's quoted command also sets
+                   `--kl_estimator kl3`); the GRPO script `docs/olmo-facts.md` names as the
+                   one those runs used, in which `kl3` is the estimator of notebook 02, added
+                   to the loss, and advantages are standardised over groups of
+                   `number_samples_per_prompt = 16`; and the
                    Instruct model card ("Finetuned from model: allenai/OLMo-2-0425-1B-RLVR1").
                 4. **Instruct**, the released model.
 
@@ -1187,9 +1201,9 @@ def _(drift, meta, mo, np, olmo, plots):
                 together moved the next-token distributions much less than the DPO stage
                 did. This measurement does not say why. What differs between the stages, as
                 `docs/olmo-facts.md` records it: the DPO stage is length-normalised DPO with
-                $\beta = 5$ on a preference mix; the RL stages are two GRPO runs with a KL
-                coefficient of 0.01 and the KL estimator in the loss (groups of 16 in the
-                training script), on
+                $\beta = 5$ on a preference mix; the RL stages are two GRPO runs, both with a KL
+                coefficient of 0.01 (the second stage's command names the `kl3` estimator,
+                which the script adds to the loss; the script's groups are of 16), on
                 mathematics and instruction-following data. The texts here answer the
                 neighbouring repository's general prompts, not those training data, so the
                 measurement says nothing about how far the model moved on mathematics or
