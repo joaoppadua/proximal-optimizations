@@ -15,6 +15,7 @@
  },
  "method": {
   "selection": "per algorithm, the learning rate in lr_grid with the lowest mean final gap over seeds [0, 1, 2] at that algorithm's default budget, against the common target pi*_beta (rule_lr); the comparison runs at comparison_lr, which is rule_lr except for grpo (see grpo_rate_exception)",
+  "tie_break": "a tie in mean final gap goes to the lower rate: the lowest rate wins",
   "lr_grid": [
    0.0001,
    0.0003,
@@ -122,25 +123,49 @@
   "grpo_rate_exception": {
    "rule_lr": 0.0001,
    "used_lr": 0.0003,
-   "reason": "published grpo runs at 0.0003, the rate chosen for grpo_ppo_like, not at 0.0001, the rate the lowest-final-gap rule picks for it. Published GRPO does not aim at pi*_beta, so the rule picks whichever rate gets least far within the budget; at one shared rate the two GRPO variants differ only in their two switches (std_normalize, kl_in)",
+   "reason": "published grpo runs at 0.0003, the rate chosen for grpo_ppo_like, not at 0.0001, the rate the lowest-final-gap rule picks for it. Published GRPO does not aim at pi*_beta, so the rule picks whichever rate moves least far from pi_ref within the budget; at one shared rate the two GRPO variants differ only in their two switches (std_normalize, kl_in)",
+   "rate_dependence": "the shared rate was chosen for grpo_ppo_like only, and the size of the difference between the two variants depends on the shared rate (see mean_final_gap_by_lr); whether published GRPO ends above or below its starting gap (start_gap) depends on the rate and the budget",
    "mean_final_gap_by_lr": [
     {
      "lr": 0.0001,
-     "mean_final_gap": 0.09019029140472412
+     "mean_final_gap": 0.09019029140472412,
+     "grpo": 0.09019029140472412,
+     "grpo_ppo_like": 0.018847409014900524
     },
     {
      "lr": 0.0003,
-     "mean_final_gap": 0.25075818101565045
+     "mean_final_gap": 0.25075818101565045,
+     "grpo": 0.25075818101565045,
+     "grpo_ppo_like": 0.013718225682775179
     },
     {
      "lr": 0.001,
-     "mean_final_gap": 0.3950435320536296
+     "mean_final_gap": 0.3950435320536296,
+     "grpo": 0.3950435320536296,
+     "grpo_ppo_like": 0.018542750428120296
     },
     {
      "lr": 0.003,
-     "mean_final_gap": 0.42755164702733356
+     "mean_final_gap": 0.42755164702733356,
+     "grpo": 0.42755164702733356,
+     "grpo_ppo_like": 0.03757780169447263
     }
-   ]
+   ],
+   "start_gap": 0.10219430923461914,
+   "start_gap_note": "the gap of pi_ref against pi*_beta: every run's step-0 gap",
+   "min_gap_during_training": {
+    "min": 0.042053673416376114,
+    "max": 0.046310991048812866
+   },
+   "min_gap_step": {
+    "min": 80,
+    "max": 88
+   },
+   "final_gap": {
+    "min": 0.23276427388191223,
+    "max": 0.2649444341659546
+   },
+   "runs_note": "start, minimum, step of the minimum and final gap of the committed grpo runs, ranges over seeds"
   },
   "points": "final gap of dpo and ppo_rm at each n_pairs in PAIR_COUNTS, one entry per seed"
  },

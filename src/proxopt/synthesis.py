@@ -84,6 +84,12 @@ def reward_model_accuracy(
     }
 
 
+def pairs(world: World, ref: Policy, n_pairs: int, tau: float, seed: int) -> prefs.PrefData:
+    """The preference pairs `dpo` and `ppo_rm` both train on for a given seed and count:
+    drawn from π_ref, graded reward, noise τ."""
+    return prefs.sample_pairs(world, ref, n_pairs, tau, PAIR_SOURCE, REWARD_MODE, seed=seed)
+
+
 def run_one(
     name: str,
     ref: Policy,
@@ -100,7 +106,7 @@ def run_one(
     cfg = configs(beta, tau, seed, {n: lr for n in NAMES})[name]
     if name in ("ppo", "grpo", "grpo_ppo_like"):
         return (ppo.train if name == "ppo" else grpo.train)(ref, world, cfg)
-    data = prefs.sample_pairs(world, ref, n_pairs, tau, PAIR_SOURCE, REWARD_MODE, seed=seed)
+    data = pairs(world, ref, n_pairs, tau, seed)
     if name == "dpo":
         return dpo.train(ref, world, data, cfg, tau, REWARD_MODE)
     if name == "ppo_rm":
@@ -116,10 +122,13 @@ def _final_gap(run: Run) -> float:
 
 
 def choose(grid: list[dict]) -> dict[str, float]:
-    """The lowest-final-gap rule: per name in `grid`, the rate with the lowest mean final gap."""
+    """The lowest-final-gap rule: per name in `grid`, the rate with the lowest mean final gap.
+    A tie goes to the lowest rate."""
     names = [n for n in NAMES if any(r["name"] == n for r in grid)]
     return {
-        n: min((r for r in grid if r["name"] == n), key=lambda r: r["mean_final_gap"])["lr"]
+        n: min(
+            (r for r in grid if r["name"] == n), key=lambda r: (r["mean_final_gap"], r["lr"])
+        )["lr"]
         for n in names
     }
 
@@ -204,6 +213,7 @@ def method(grid: list[dict], result: dict) -> dict:
             "common target pi*_beta (rule_lr); the comparison runs at comparison_lr, which "
             "is rule_lr except for grpo (see grpo_rate_exception)"
         ),
+        "tie_break": "a tie in mean final gap goes to the lower rate: the lowest rate wins",
         "lr_grid": list(LR_GRID),
         "tuning_seeds": tuning_seeds,
         "comparison_seeds": comparison_seeds,
@@ -236,29 +246,61 @@ def method(grid: list[dict], result: dict) -> dict:
             "dpo": "labelled preference pairs (constant over a run)",
             "ppo_rm": "reward-model calls; the model was fitted on n_pairs labelled pairs",
         },
-        **_grpo_exception(grid, rule, result["lr"]),
+        **_grpo_exception(grid, rule, result["lr"], result.get("runs")),
         "points": "final gap of dpo and ppo_rm at each n_pairs in PAIR_COUNTS, one entry per seed",
     }
 
 
-def _grpo_exception(grid: list[dict], rule: dict, used: dict) -> dict:
-    if "grpo" not in rule or "grpo" not in used:
+def _range(values: Sequence[float]) -> dict:
+    return {"min": min(values), "max": max(values)}
+
+
+def _grpo_exception(
+    grid: list[dict], rule: dict, used: dict, runs: dict[str, list[Run]] | None
+) -> dict:
+    """Why `grpo` runs at `grpo_ppo_like`'s rate, and how much its result depends on the rate:
+    both variants' mean final gap at every grid rate, and, from the committed runs, the
+    starting gap, the lowest gap reached and when, and the final gap (ranges over seeds)."""
+    if "grpo" not in rule or "grpo_ppo_like" not in rule or "grpo" not in used:
         return {}
-    return {"grpo_rate_exception": {
+    by = {(r["name"], r["lr"]): r["mean_final_gap"] for r in grid}
+    out = {
         "rule_lr": rule["grpo"],
         "used_lr": used["grpo"],
         "reason": (
             f"published grpo runs at {used['grpo']:g}, the rate chosen for grpo_ppo_like, "
             f"not at {rule['grpo']:g}, the rate the lowest-final-gap rule picks for it. "
-            "Published GRPO does not aim at pi*_beta, so the rule picks whichever rate gets "
-            "least far within the budget; at one shared rate the two GRPO variants differ "
-            "only in their two switches (std_normalize, kl_in)"
+            "Published GRPO does not aim at pi*_beta, so the rule picks whichever rate "
+            "moves least far from pi_ref within the budget; at one shared rate the two GRPO "
+            "variants differ only in their two switches (std_normalize, kl_in)"
+        ),
+        "rate_dependence": (
+            "the shared rate was chosen for grpo_ppo_like only, and the size of the "
+            "difference between the two variants depends on the shared rate (see "
+            "mean_final_gap_by_lr); whether published GRPO ends above or below its starting "
+            "gap (start_gap) depends on the rate and the budget"
         ),
         "mean_final_gap_by_lr": [
-            {"lr": r["lr"], "mean_final_gap": r["mean_final_gap"]}
-            for r in grid if r["name"] == "grpo"
+            {"lr": lr, "mean_final_gap": by[("grpo", lr)], "grpo": by[("grpo", lr)],
+             "grpo_ppo_like": by[("grpo_ppo_like", lr)]}
+            for lr in LR_GRID if ("grpo", lr) in by and ("grpo_ppo_like", lr) in by
         ],
-    }}
+    }
+    if runs and runs.get("grpo"):
+        starts = {r.metrics["gap"][0] for group in runs.values() for r in group}
+        if len(starts) != 1:
+            raise ValueError(f"runs start from different gaps: {sorted(starts)}")
+        gaps = [r.metrics["gap"] for r in runs["grpo"]]
+        lowest = [min(g) for g in gaps]
+        out.update({
+            "start_gap": starts.pop(),
+            "start_gap_note": "the gap of pi_ref against pi*_beta: every run's step-0 gap",
+            "min_gap_during_training": _range(lowest),
+            "min_gap_step": _range([r.steps[g.index(m)] for r, g, m in zip(runs["grpo"], gaps, lowest)]),
+            "final_gap": _range([g[-1] for g in gaps]),
+            "runs_note": "start, minimum, step of the minimum and final gap of the committed grpo runs, ranges over seeds",
+        })
+    return {"grpo_rate_exception": out}
 
 
 def save(path: Path, grid: list[dict], result: dict) -> None:
@@ -287,7 +329,11 @@ def _path(path: Path | None) -> Path:
 
 def load(path: Path | None = None) -> dict | None:
     """The saved comparison with its runs rebuilt as `Run`s, or `None` if the file is
-    missing. `path` defaults to `$PROXOPT_SYNTHESIS_FILE`, else `data/synthesis.json`."""
+    missing. `path` defaults to `$PROXOPT_SYNTHESIS_FILE`, else `data/synthesis.json`.
+
+    Loaded runs have `policy=None`, a string `config` and empty `extras`: per-run extras
+    (DPO's loss curves, GRPO's dead groups, PPO's ratios) are not in the file. The reward
+    model's accuracy for every `ppo_rm` run is in the top-level `"reward_model"` rows."""
     path = _path(path)
     if not path.exists():
         return None

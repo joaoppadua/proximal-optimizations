@@ -1,10 +1,13 @@
 import json
 import re
+from pathlib import Path
 
 import pytest
+import torch
 
 from proxopt import synthesis
 from proxopt.reference import load_reference
+from proxopt.train import Run
 from proxopt.world import DEFAULT_WORLD
 
 
@@ -37,6 +40,16 @@ def test_choose_takes_lowest_mean_final_gap():
     assert synthesis.choose(_grid(RULE)) == RULE
 
 
+def test_choose_breaks_ties_with_the_lowest_rate():
+    rows = [{"name": "ppo", "lr": r, "mean_final_gap": 0.05} for r in reversed(synthesis.LR_GRID)]
+    assert synthesis.choose(rows) == {"ppo": min(synthesis.LR_GRID)}
+
+
+def _fake_run(gaps, steps):
+    return Run(policy=None, config="fake", target_beta=0.1, steps=steps,
+               feedback=list(steps), metrics={"gap": gaps})
+
+
 def test_comparison_rates_run_grpo_at_grpo_ppo_like_rate():
     rates = synthesis.comparison_rates(RULE)
     assert rates["grpo"] == RULE["grpo_ppo_like"] == 3e-4
@@ -49,7 +62,13 @@ def test_comparison_rates_run_grpo_at_grpo_ppo_like_rate():
 def test_method_flags_grid_edges_and_shared_seeds():
     grid = _grid(RULE)
     lr = synthesis.comparison_rates(RULE)
-    m = synthesis.method(grid, {"beta": 0.1, "tau": 0.25, "lr": lr, "seeds": [0, 1, 2]})
+    runs = {n: [_fake_run([0.1, 0.05, 0.08], [0, 10, 20])] * 3 for n in synthesis.NAMES}
+    runs["grpo"] = [_fake_run([0.1, 0.04, 0.2], [0, 10, 20]),
+                    _fake_run([0.1, 0.03, 0.2], [0, 20, 30]),
+                    _fake_run([0.1, 0.05, 0.3], [0, 10, 20])]
+    m = synthesis.method(grid, {"beta": 0.1, "tau": 0.25, "lr": lr, "seeds": [0, 1, 2],
+                                "runs": runs})
+    assert "lowest rate wins" in m["tie_break"]
     edge = m["grid_edge"]  # describes what the rule alone picked
     assert edge["ppo"] == {"at_grid_edge": False, "edge": None}
     assert edge["grpo"] == {"at_grid_edge": True, "edge": "lowest"}
@@ -63,6 +82,43 @@ def test_method_flags_grid_edges_and_shared_seeds():
     assert "grpo_ppo_like" in exc["reason"]
     assert [row["lr"] for row in exc["mean_final_gap_by_lr"]] == list(synthesis.LR_GRID)
     assert exc["mean_final_gap_by_lr"][0]["mean_final_gap"] == 0.01
+    both = exc["mean_final_gap_by_lr"]
+    assert [row["grpo_ppo_like"] for row in both] == [
+        r["mean_final_gap"] for r in grid if r["name"] == "grpo_ppo_like"
+    ]
+    assert [row["grpo"] for row in both] == [row["mean_final_gap"] for row in both]
+    assert exc["start_gap"] == 0.1
+    assert exc["min_gap_during_training"] == {"min": 0.03, "max": 0.05}
+    assert exc["min_gap_step"] == {"min": 10, "max": 20}
+    assert exc["final_gap"] == {"min": 0.2, "max": 0.3}
+    assert "moves least far from pi_ref" in exc["reason"]
+    assert "depends on the shared rate" in exc["rate_dependence"]
+    assert "above or below" in exc["rate_dependence"]
+
+
+class _Stop(Exception):
+    pass
+
+
+def test_dpo_and_ppo_rm_receive_identical_pairs(monkeypatch):
+    ref = load_reference(DEFAULT_WORLD)
+    seen = {}
+
+    def capture(name):
+        def f(*args, **kwargs):
+            seen[name] = args[2] if name == "dpo" else args[1]
+            raise _Stop
+        return f
+
+    monkeypatch.setattr(synthesis.dpo, "train", capture("dpo"))
+    monkeypatch.setattr(synthesis.prefs, "fit_reward_model", capture("ppo_rm"))
+    for name in ("dpo", "ppo_rm"):
+        with pytest.raises(_Stop):
+            synthesis.run_one(name, ref, DEFAULT_WORLD, 0.1, 0.25, 2, 3e-4, n_pairs=300)
+    expected = synthesis.pairs(DEFAULT_WORLD, ref, 300, 0.25, seed=2)
+    for field in ("prompts", "winners", "losers"):
+        assert torch.equal(getattr(seen["dpo"], field), getattr(seen["ppo_rm"], field))
+        assert torch.equal(getattr(seen["dpo"], field), getattr(expected, field))
 
 
 def test_load_returns_none_when_missing(tmp_path):
@@ -111,7 +167,6 @@ def test_every_run_targets_beta_and_round_trips(tmp_path):
     assert (tmp_path / "s.json").read_bytes() == (tmp_path / "t.json").read_bytes()
 
 
-@pytest.mark.slow
 def test_committed_file_is_complete():
     data = synthesis.load()
     assert data is not None and set(data["runs"]) == set(synthesis.NAMES)
@@ -134,8 +189,11 @@ def test_committed_file_is_complete():
     lr_of = lambda r: float(re.search(r"\blr=([0-9.e-]+)", r.config).group(1))
     assert {lr_of(r) for r in data["runs"]["grpo"]} == {lr_of(r) for r in data["runs"]["grpo_ppo_like"]}
     assert {lr_of(r) for r in data["runs"]["grpo"]} == {data["lr"]["grpo_ppo_like"]}
-    assert sorted(r["lr"] for r in data["grid"] if r["name"] == "grpo") == list(synthesis.LR_GRID)
+    for name in synthesis.NAMES:
+        assert sorted(r["lr"] for r in data["grid"] if r["name"] == name) == list(synthesis.LR_GRID)
+        assert {lr_of(r) for r in data["runs"][name]} == {data["lr"][name]}
     assert synthesis.choose(data["grid"]) == data["method"]["rule_lr"]
+    assert data["lr"] == synthesis.comparison_rates(data["method"]["rule_lr"])
 
 
 def test_committed_file_has_no_machine_details():
@@ -143,6 +201,22 @@ def test_committed_file_has_no_machine_details():
     if not path.exists():
         pytest.skip("data/synthesis.json not written yet")
     text = path.read_text()
-    assert "/Users/" not in text and "home/" not in text
     data = json.loads(text)
     assert not ({"time", "wall_time", "timestamp", "date"} & set(data))
+    home = Path.home()
+    fragments = ["/Users/", "/home/", "C:\\", str(home), home.name, str(Path.cwd())]
+
+    def strings(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                yield k
+                yield from strings(v)
+        elif isinstance(x, list):
+            for v in x:
+                yield from strings(v)
+        elif isinstance(x, str):
+            yield x
+
+    for value in strings(data):
+        for frag in fragments:
+            assert frag not in value, (frag, value[:80])
