@@ -126,14 +126,14 @@ def _(DEFAULT_WORLD, cite, mo):
         So the per-prompt objective is $\beta \log Z_\beta(x) - \beta\,\mathrm{KL}(\pi \| \pi^*_\beta)$;
         the KL is $\ge 0$ and is 0 only at $\pi = \pi^*_\beta$, which is therefore the maximiser.
 
-        **Its value.** Setting $\pi = \pi^*_\beta$ in that line makes the KL vanish:
+        **Its value.**
 
         $$
         J_\beta(\pi^*_\beta) = \beta \, \mathbb{E}_x\big[\log Z_\beta(x)\big].
         $$
 
-        *Derivation.* Average the per-prompt identity over $x$; the second term is 0 at the
-        optimum.
+        *Derivation.* Set $\pi = \pi^*_\beta$ in the per-prompt identity, which makes its KL
+        term vanish, and average over $x$.
 
         **The gap identity**, the yardstick of every notebook:
 
@@ -451,10 +451,13 @@ def _(mo):
     loss is a sum of per-token log-probabilities weighted by a sequence-level return,
     the KL to the reference is a per-token log-ratio summed along the response, and the
     baseline matters for the same reason. What does not: here the response space is
-    enumerable, so the reward, the drift and the gap to $\pi^*_\beta$ are exact; for an LLM
-    none of them can be computed, the optimum is unknown, and drift is only ever
-    estimated from samples. The numbers (how many steps, what batch size, how much
-    spread across seeds) are facts about this toy world, not about LLMs.
+    enumerable, so the expected reward, the drift and the gap to $\pi^*_\beta$ are computed
+    exactly. For an LLM, the reward of a sampled response can be computed, but expected
+    reward and drift can only be estimated from samples, and the optimum and the gap are
+    unknown. The numbers (how many steps, what batch size, how much spread across seeds)
+    are facts about this toy world, not about LLMs. So is the explanation offered for item 1
+    below (without a baseline every sample is pushed up). It relies on a reward that lies in
+    $[0, 1]$ and is always positive, and reward-model scores need not have either property.
     """)
     return
 
@@ -541,14 +544,23 @@ def _(mo, reveal):
                 "B = 32 for 400 steps: the same 12,800 reward calls (or press the button, "
                 "which plots both against units of feedback). Which path is noisier, and which "
                 "ends closer to the optimum?",
-                "Measured over seeds 0–2. Both reach a mean gap below 0.02 after the same "
-                "2,560 reward calls, and they end close: 0.0105–0.0112 for B = 64 against "
-                "0.0127–0.0129 for B = 32, so halving the batch did not help, slightly the "
-                "opposite. The smaller batch's path is noisier: compared at the same feedback, "
-                "its seed-to-seed spread is 0.0018 against 0.0011, and its curve wobbles about "
-                "1.6 times as much around a 3-point moving average. More, smaller steps on "
-                "the same budget give noisier gradient estimates; here they do not buy "
-                "anything.",
+                "Measured over seeds 0–2. B = 64 is evaluated every 640 reward calls and "
+                "B = 32 every 320; the comparisons below use the shared grid of every 640 "
+                "calls, with the gap averaged over seeds unless a range is given. "
+                "**A slightly faster start:** B = 32 is ahead at 640, 1,280 and 1,920 calls "
+                "(0.031, 0.025, 0.021 against 0.036, 0.027, 0.022). On its own finer grid its "
+                "mean gap is below 0.02 at 2,240 calls; B = 64 is below 0.02 by 2,560, its "
+                "first evaluation after 1,920. **A slightly worse finish:** from 2,560 calls "
+                "on, B = 64 is ahead, and at 12,800 calls the gaps are 0.0105–0.0112 (B = 64) "
+                "against 0.0127–0.0129 (B = 32). **Noise:** a curve's wobble is measured as "
+                "its distance from a 3-point moving average, averaged over seeds and points. "
+                "After the initial drop (from 1,920 calls on) B = 32 wobbles 1.6 times as "
+                "much as B = 64, but only 1.2 times as much if the drop is included (from 640 "
+                "calls on). The seed-to-seed range (max − min), averaged over the grid from "
+                "640 calls on, is 0.0018 for B = 32 and 0.0011 for B = 64. At the last point "
+                "this reverses: 0.0002 for B = 32 against 0.0007. In short, more and smaller "
+                "steps on the same budget give noisier estimates, a slightly faster start "
+                "and a slightly worse finish.",
             ),
             seeds_batch,
         ]
@@ -586,8 +598,9 @@ def _(mo):
     baseline with a learned critic and per-token advantages. GRPO (notebook 02) drops the
     critic again and uses the mean of a group of samples for the same prompt as the
     baseline, standardised by the group's spread. DPO (notebook 03) uses the closed form of
-    $\pi^*_\beta$ derived above to skip sampling and reward altogether, fitting the policy
-    to preference pairs directly.
+    $\pi^*_\beta$ derived above to do without on-policy sampling and without an explicit
+    reward model. It still needs data: pairs of sampled responses, each labelled with which
+    one is preferred, and it fits the policy to those pairs directly.
     """)
     return
 
